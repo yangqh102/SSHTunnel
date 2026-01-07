@@ -5,9 +5,8 @@
   "scripts": {
     "start": "electron .",
     "build:win": "electron-builder --win --x64",
-    "build:mac": "electron-rebuild && electron-builder --mac",
-    "build:all": "electron-builder --win --mac --linux",
-    "rebuild": "electron-rebuild -f -w ssh2"
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac --linux"
   },
   "build": {
     "appId": "com.localoverleaf.app",
@@ -25,22 +24,19 @@
       "icon": "assets/app-icon.ico"
     },
     "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["arm64", "x64"]
-        }
-      ],
+      "target": {
+        "target": "dmg",
+        "arch": ["arm64"]
+      },
       "icon": "assets/app-icon.icns",
-      "category": "Utility",
-      "hardenedRuntime": false
+      "category": "Utility"
     },
     "files": [
-      "**/*",
-      "!node_modules/ssh2/build/**"
+      "**/*"
     ],
     "asarUnpack": [
-      "node_modules/ssh2/**/*.node"
+      "node_modules/ssh2/**/*.node",
+      "node_modules/ssh2/lib/**/*"
     ],
     "extraFiles": [
       {
@@ -48,7 +44,7 @@
         "to": "assets/"
       }
     ],
-    "npmRebuild": false,
+    "npmRebuild": true,
     "buildDependenciesFromSource": true
   },
   "dependencies": {
@@ -58,7 +54,6 @@
   },
   "devDependencies": {
     "electron": "^39.2.7",
-    "electron-builder": "^26.4.0",
-    "electron-rebuild": "^3.2.9"
+    "electron-builder": "^26.4.0"
   }
 }
