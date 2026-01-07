@@ -43,9 +43,11 @@ jobs:
           npm install --save-dev electron-rebuild
           npx electron-rebuild -f -w ssh2 # 仅重建Windows平台的ssh2
 
-      # 步骤6：打包Windows exe
+      # 步骤6：打包Windows exe（新增env传递GH_TOKEN）
       - name: Build Electron App for Windows
-        run: npm run build:win # 执行package.json中的build:win脚本
+        run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }} # 从仓库Secrets中读取Token
 
       # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact
