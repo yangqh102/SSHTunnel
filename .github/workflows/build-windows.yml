@@ -47,7 +47,8 @@ jobs:
       - name: Build Electron App for Windows
         run: npm run build:win
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }} # 从仓库Secrets中读取Token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BT_TOKEN: ${{ secrets.BT_TOKEN }}
 
       # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact
