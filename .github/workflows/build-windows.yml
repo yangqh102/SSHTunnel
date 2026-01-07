@@ -37,13 +37,19 @@ jobs:
           npm install --global node-gyp
           npm install # 安装package.json中的依赖
 
-      # 步骤5：打包Windows exe（新增env传递GH_TOKEN）
+      # 步骤5：重建ssh2原生模块（适配Electron版本）
+      - name: Rebuild Native Modules (ssh2)
+        run: |
+          npm install --save-dev electron-rebuild
+          npx electron-rebuild -f -w ssh2 # 仅重建Windows平台的ssh2
+
+      # 步骤6：打包Windows exe（新增env传递GH_TOKEN）
       - name: Build Electron App for Windows
         run: npm run build:win
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤6：上传打包产物（exe安装包）到GitHub Artifacts
+      # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
