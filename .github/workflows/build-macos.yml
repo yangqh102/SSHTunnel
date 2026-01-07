@@ -1,68 +1,99 @@
-# macOS 应用打包工作流
 name: Build macOS Electron App
 
-# 触发条件：推送到main分支 / 手动触发
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build-macos:
-    runs-on: macos-latest # 必须用macOS运行器（仅macOS能打包macOS应用）
+    runs-on: macos-latest
     steps:
-      # 步骤1：拉取仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2：安装Node.js（匹配Electron版本，选18.x）
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
-          cache: 'npm' # 缓存依赖，加速构建
+          cache: 'npm'
+          # 关键：禁用缓存（避免损坏的ssh2缓存），测试通过后可恢复
+          cache-dependency-path: '' 
 
-      # 步骤3：安装macOS原生编译工具（解决ssh2编译）
-      - name: Install macOS Build Tools
+      # 步骤1：修复macOS权限 & 清理旧缓存
+      - name: Fix macOS Permissions & Clean Cache
         run: |
-          # 安装Xcode命令行工具（编译C++原生模块必需）
-          xcode-select --install || true # || true避免已安装时报错
-          # 安装homebrew依赖（若需要）
-          brew install python3
+          # 重置npm权限，避免安装失败
+          sudo chown -R $USER:$GROUP ~/.npm
+          sudo chown -R $USER:$GROUP /Users/runner/work
+          # 清理npm缓存和node_modules
+          npm cache clean --force
+          rm -rf node_modules
+          rm -f package-lock.json yarn.lock
+
+      # 步骤2：安装完整的macOS编译环境
+      - name: Install Full Build Tools
+        run: |
+          # 强制安装Xcode命令行工具（忽略已安装提示）
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcode-select --install || true
+          # 安装依赖工具
+          brew install python3 openssl
           npm install --global node-gyp@latest
+          # 配置node-gyp使用正确的Python
+          npm config set python $(which python3)
+          npm config set openssl_root_dir $(brew --prefix openssl)
 
-      # 步骤4：安装项目依赖
-      - name: Install Dependencies
-        run: npm install --verbose # --verbose显示日志，方便排查
-
-      # 步骤5：重建ssh2原生模块（适配macOS + Electron）
-      - name: Rebuild Native Modules (ssh2 for macOS)
+      # 步骤3：重新安装依赖（带详细日志，确保ssh2安装成功）
+      - name: Reinstall Dependencies (Force Fresh)
         run: |
-          npm install --save-dev electron-rebuild
-          # -m 表示macOS平台，强制重建ssh2
-          npx electron-rebuild -f -m ssh2 --verbose
-          # 验证编译结果
-          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ]; then
-            echo "✅ ssh2 编译成功（macOS）"
+          # 强制重新安装所有依赖，跳过缓存
+          npm install --force --verbose --no-cache
+          # 关键验证：检查ssh2是否安装成功（存在package.json）
+          if [ -f "node_modules/ssh2/package.json" ]; then
+            echo "✅ ssh2 依赖安装成功，package.json 存在"
+            # 打印ssh2路径，确认位置
+            ls -la node_modules/ssh2/
           else
-            echo "❌ ssh2 编译失败"
+            echo "❌ ssh2 依赖安装失败，缺失package.json"
+            # 打印node_modules目录，排查问题
+            ls -la node_modules/
             exit 1
           fi
 
-      # 步骤6：打包macOS应用（.app + .dmg）
-      - name: Build Electron App for macOS
+      # 步骤4：重建ssh2（仅在确认安装成功后执行）
+      - name: Rebuild ssh2 for Electron (macOS)
+        run: |
+          npm install --save-dev electron-rebuild
+          # 显式指定Electron版本重建，避免版本匹配错误
+          npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --verbose
+          # 验证编译后的二进制文件
+          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ]; then
+            echo "✅ ssh2 原生模块编译成功（macOS x64）"
+          elif [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-arm64/ssh2.node" ]; then
+            echo "✅ ssh2 原生模块编译成功（macOS arm64）"
+          else
+            echo "❌ ssh2 原生模块编译失败，二进制文件缺失"
+            ls -la node_modules/ssh2/lib/binding/
+            exit 1
+          fi
+
+      # 步骤5：打包macOS应用
+      - name: Build macOS App
         run: npm run build:mac --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BT_TOKEN: ${{ secrets.BT_TOKEN }}
+          # 临时禁用asar（测试用，排查打包路径问题）
+          ELECTRON_BUILDER_ASAR: false
 
-      # 步骤7：上传打包产物到Artifacts
-      - name: Upload Build Artifact
+      # 步骤6：上传产物
+      - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-app-build # 产物名称
-          path: | # 打包产物路径
-            dist/*.dmg # dmg安装镜像
-            dist/*.zip # 压缩的app包
-            dist/mac/ # .app应用包文件夹
-          retention-days: 30 # 产物保留30天
+          name: macos-app-build
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/mac/
+          retention-days: 30
