@@ -17,63 +17,58 @@ jobs:
         with:
           node-version: 18.x
           cache: 'npm'
-          # 关键：禁用缓存（避免损坏的ssh2缓存），测试通过后可恢复
-          cache-dependency-path: '' 
+          cache-dependency-path: '' # 禁用缓存，避免干扰
 
-      # 步骤1：修复macOS权限 & 清理旧缓存
-      - name: Fix macOS Permissions & Clean Cache
+      # 步骤1：修复macOS权限 + 清理旧依赖/缓存
+      - name: Fix Permissions & Clean Cache
         run: |
-          # 重置npm权限，避免安装失败
           sudo chown -R $USER:$GROUP ~/.npm
           sudo chown -R $USER:$GROUP /Users/runner/work
-          # 清理npm缓存和node_modules
           npm cache clean --force
           rm -rf node_modules
           rm -f package-lock.json yarn.lock
 
-      # 步骤2：安装完整的macOS编译环境
-      - name: Install Full Build Tools
+      # 步骤2：安装编译环境（修正Python配置方式）
+      - name: Install Build Tools (Fixed Python Config)
         run: |
-          # 强制安装Xcode命令行工具（忽略已安装提示）
+          # 安装Xcode命令行工具
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
           xcode-select --install || true
-          # 安装依赖工具
-          brew install python3 openssl
+          # 安装Python3（固定版本，避免兼容问题）
+          brew install python@3.10 openssl
+          # 配置node-gyp（核心修复：不用npm config，改用环境变量/PATH）
+          export PYTHON=$(which python3.10)
+          export PATH="$PYTHON:$PATH"
+          # 告诉node-gyp使用指定的Python（替代npm config set python）
+          node-gyp configure --python="$PYTHON"
+          # 全局安装node-gyp
           npm install --global node-gyp@latest
-          # 配置node-gyp使用正确的Python
-          npm config set python $(which python3)
-          npm config set openssl_root_dir $(brew --prefix openssl)
 
-      # 步骤3：重新安装依赖（带详细日志，确保ssh2安装成功）
-      - name: Reinstall Dependencies (Force Fresh)
+      # 步骤3：重新安装依赖（无无效npm配置）
+      - name: Install Dependencies
         run: |
-          # 强制重新安装所有依赖，跳过缓存
+          # 强制安装，跳过无效的python配置
           npm install --force --verbose --no-cache
-          # 关键验证：检查ssh2是否安装成功（存在package.json）
+          # 验证ssh2是否安装成功
           if [ -f "node_modules/ssh2/package.json" ]; then
-            echo "✅ ssh2 依赖安装成功，package.json 存在"
-            # 打印ssh2路径，确认位置
-            ls -la node_modules/ssh2/
+            echo "✅ ssh2 安装成功"
           else
-            echo "❌ ssh2 依赖安装失败，缺失package.json"
-            # 打印node_modules目录，排查问题
+            echo "❌ ssh2 安装失败"
             ls -la node_modules/
             exit 1
           fi
 
-      # 步骤4：重建ssh2（仅在确认安装成功后执行）
-      - name: Rebuild ssh2 for Electron (macOS)
+      # 步骤4：重建ssh2（适配Electron）
+      - name: Rebuild ssh2 for Electron
         run: |
           npm install --save-dev electron-rebuild
-          # 显式指定Electron版本重建，避免版本匹配错误
-          npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --verbose
-          # 验证编译后的二进制文件
-          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ]; then
-            echo "✅ ssh2 原生模块编译成功（macOS x64）"
-          elif [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-arm64/ssh2.node" ]; then
-            echo "✅ ssh2 原生模块编译成功（macOS arm64）"
+          # 显式指定Python路径给electron-rebuild
+          PYTHON=$(which python3.10) npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --verbose
+          # 验证编译结果
+          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ] || [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-arm64/ssh2.node" ]; then
+            echo "✅ ssh2 编译成功"
           else
-            echo "❌ ssh2 原生模块编译失败，二进制文件缺失"
+            echo "❌ ssh2 编译失败"
             ls -la node_modules/ssh2/lib/binding/
             exit 1
           fi
@@ -84,11 +79,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BT_TOKEN: ${{ secrets.BT_TOKEN }}
-          # 临时禁用asar（测试用，排查打包路径问题）
-          ELECTRON_BUILDER_ASAR: false
+          PYTHON: $(which python3.10) # 传递Python路径到打包环境
 
       # 步骤6：上传产物
-      - name: Upload macOS Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-app-build
