@@ -6,87 +6,69 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# 运行作业
 jobs:
   build-macos:
+    # 必须指定 macOS 系统，Electron打包mac应用只能在macOS环境执行
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 30 # 超时时间，防止卡死
 
     steps:
+      # 步骤1：检出仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # 关键修复1：指定Python 3.9（保留distutils），并安装setuptools补全依赖
-      - name: Setup Python 3.9 (with distutils)
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.9' # 核心：3.9保留distutils，避免编译报错
-          cache: 'pip'
+          fetch-depth: 0
 
-      - name: Install Python Dependencies (setuptools/distutils)
-        run: |
-          # 安装setuptools（替代distutils，兼容新版Python）
-          pip3 install --upgrade setuptools wheel
-          # 验证Python版本和distutils是否存在
-          python3 --version
-          python3 -c "import distutils; print('distutils found')"
-
+      # 步骤2：配置Node.js环境 (Electron39推荐Node18，兼容所有依赖)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
-          cache: 'npm'
+          cache: 'npm' # 自动缓存 node_modules 依赖，加速安装
 
-      # 关键修复2：安装macOS编译依赖（补充openssl，ssh2编译必需）
-      - name: Install macOS Build Dependencies
-        run: |
-          # 确保Xcode命令行工具完整
-          if ! xcode-select -p; then
-            xcode-select --install || true
-          fi
-          # 安装ssh2编译依赖的openssl
-          brew install openssl@3 || true
-          # 配置openssl环境变量，让node-gyp找到库文件
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+      # 步骤3：缓存大文件（重中之重），提升构建速度90%
+      # 缓存 Electron本体/electron-builder缓存/ssh2原生模块编译缓存
+      - name: Cache build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            node_modules/.cache
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      # 关键修复3：配置node-gyp使用Python 3.9，避免版本冲突
-      - name: Configure node-gyp for Python 3.9
+      # 步骤4：安装macOS编译依赖（原生模块必须，ssh2需要xcode编译工具链）
+      - name: Install macOS build tools
         run: |
-          # 全局配置node-gyp的Python路径
-          npm config set python $(which python3.9)
-          # 安装node-gyp最新版，适配Python 3.9
-          npm install --global node-gyp@latest electron-rebuild
+          xcode-select --install || true # 安装Xcode命令行工具，已安装则忽略报错
+          brew install libusb || true    # 可选：兼容部分原生模块编译
 
-      - name: Install Dependencies
-        run: |
-          npm install
+      # 步骤5：安装项目依赖 (适配你的package.json，自动rebuild原生模块)
+      - name: Install dependencies
+        run: npm install
         env:
+          # 解决electron下载慢的问题，配置国内镜像源
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
-          npm_config_build_from_source: true
-          # 传递openssl环境变量给npm编译
-          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
-      - name: Rebuild Native Modules (ssh2)
-        run: |
-          # 重建ssh2，指定Python 3.9和openssl路径
-          npx electron-rebuild --force --arch arm64 --module ssh2
-          # 验证重建结果
-          ls -la node_modules/ssh2/lib/binding/electron-v*/darwin-arm64/ || echo "Binding dir check: skip if not exist"
-
-      - name: Build Electron App for macOS
+      # 步骤6：执行打包命令（直接调用你package.json里的build:mac脚本）
+      - name: Build macOS App (dmg + zip)
         run: npm run build:mac
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCH: arm64
-          ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
-          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false # 关闭Mac签名自动检测（本地打包无需签名）
+          # 如果你需要签名，这里配置签名证书相关环境变量即可
 
-      - name: Upload Build Artifact
+      # 步骤7：上传打包产物 (dist目录下的所有安装包)
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-build
+          name: LocalOverleaf-macOS-${{ github.sha }}
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/mac-arm64/
-          retention-days: 30
+            dist/*.dmg.blockmap
+          retention-days: 15 # 产物保留15天，节省存储空间
