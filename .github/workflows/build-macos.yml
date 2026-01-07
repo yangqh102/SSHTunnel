@@ -49,7 +49,7 @@ jobs:
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
       - name: Rebuild native modules (ssh2) // 新增：执行手动重建脚本
-        run: npm run prebuild
+        run: npm install --save-dev electron-rebuild
         env:
           # 强制指定架构，避免路径解析错误
           ARCH: arm64
