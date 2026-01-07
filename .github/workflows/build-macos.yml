@@ -6,29 +6,23 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# 运行作业
 jobs:
   build-macos:
-    # 必须指定 macOS 系统，Electron打包mac应用只能在macOS环境执行
     runs-on: macos-latest
-    timeout-minutes: 30 # 超时时间，防止卡死
+    timeout-minutes: 30
 
     steps:
-      # 步骤1：检出仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 步骤2：配置Node.js环境 (Electron39推荐Node18，兼容所有依赖)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
-          cache: 'npm' # 自动缓存 node_modules 依赖，加速安装
+          cache: 'npm'
 
-      # 步骤3：缓存大文件（重中之重），提升构建速度90%
-      # 缓存 Electron本体/electron-builder缓存/ssh2原生模块编译缓存
       - name: Cache build dependencies
         uses: actions/cache@v4
         with:
@@ -37,48 +31,36 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
             node_modules/.cache
-            ~/.node-gyp
-            ./node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # 步骤4：安装macOS编译依赖（关键：补充node-gyp所需依赖）
       - name: Install macOS build tools
         run: |
-          # 强制安装Xcode命令行工具（修复编译链）
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
-          # 安装node-gyp依赖（python3、libusb、make）
-          brew install python3 libusb make || true
-          # 配置node-gyp使用python3
-          npm config set python $(which python3)
-          # 安装Xcode签名工具（可选，避免编译警告）
-          brew install codesign || true
+          xcode-select --install || true
+          brew install libusb || true
+          # 新增：安装node-gyp依赖（解决原生模块编译）
+          npm install -g node-gyp
 
-      # 步骤5：安装项目依赖 (适配你的package.json，手动重建原生模块)
       - name: Install dependencies
-        run: |
-          npm install
-          # 显式重建ssh2原生模块（指定Electron版本，避免路径解析错误）
-          npx electron-rebuild -f -w ssh2 --version 39.2.7
+        run: npm install
         env:
-          # 解决electron下载慢的问题，配置国内镜像源
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
-          # 配置node-gyp编译环境
-          CXXFLAGS: "-mmacosx-version-min=10.15"
-          LDFLAGS: "-mmacosx-version-min=10.15"
 
-      # 步骤6：执行打包命令（直接调用你package.json里的build:mac脚本）
+      - name: Rebuild native modules (ssh2) // 新增：执行手动重建脚本
+        run: npm run prebuild
+        env:
+          # 强制指定架构，避免路径解析错误
+          ARCH: arm64
+          ELECTRON_VERSION: 39.2.7
+
       - name: Build macOS App (dmg + zip)
         run: npm run build:mac
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false # 关闭Mac签名自动检测（本地打包无需签名）
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 禁用asar压缩调试（可选，排查路径问题）
-          # ASAR: false
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          ARCH: arm64
 
-      # 步骤7：上传打包产物 (dist目录下的所有安装包)
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -87,4 +69,4 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.dmg.blockmap
-          retention-days: 15 # 产物保留15天，节省存储空间
+          retention-days: 15
