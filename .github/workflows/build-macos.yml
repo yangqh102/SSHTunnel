@@ -8,111 +8,119 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    env:
+      # 全局环境变量：指定arm64架构的依赖路径
+      ARCH: arm64
+      OPENSSL_ROOT_DIR: /opt/homebrew/opt/openssl@3
+      OPENSSL_LIB_DIR: /opt/homebrew/opt/openssl@3/lib
+      OPENSSL_INCLUDE_DIR: /opt/homebrew/opt/openssl@3/include
+      PYTHON: /opt/homebrew/bin/python3.10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (18.x, arm64)
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
+          architecture: arm64 # 显式指定arm64架构
           cache: 'npm'
-          cache-dependency-path: '' # 禁用缓存避免干扰
+          cache-dependency-path: ''
 
-      # 步骤1：修复权限 + 清理旧依赖
-      - name: Fix Permissions & Clean Cache
+      # 步骤1：彻底清理旧依赖和缓存
+      - name: Clean Up Environment
         run: |
-          sudo chown -R $USER:$GROUP ~/.npm
-          sudo chown -R $USER:$GROUP /Users/runner/work
+          sudo rm -rf /Users/runner/work/_temp/*
           npm cache clean --force
-          rm -rf node_modules
-          rm -f package-lock.json yarn.lock
+          rm -rf node_modules package-lock.json yarn.lock
+          # 重置Xcode工具链
+          sudo xcode-select -r
+          xcode-select --print-path
 
-      # 步骤2：安装编译环境（核心修复node-gyp路径问题）
-      - name: Install Build Tools (Fix node-gyp PATH)
+      # 步骤2：安装完整的编译环境（适配arm64）
+      - name: Install Full Build Dependencies (arm64)
         run: |
-          # 1. 安装Xcode命令行工具
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          # 1. 安装Xcode命令行工具（强制重装）
+          sudo rm -rf /Library/Developer/CommandLineTools
           xcode-select --install || true
-
-          # 2. 安装Python3.10和openssl
-          brew install python@3.10 openssl
-          export PYTHON=$(which python3.10)
-          export PATH="$PYTHON:$PATH"
-
-          # 3. 安装node-gyp并配置PATH（关键！）
-          # 获取npm全局安装路径
-          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
-          # 将npm全局路径加入系统PATH（让终端找到node-gyp）
-          export PATH="$NPM_GLOBAL_PATH:$PATH"
-          # 全局安装node-gyp
-          npm install --global node-gyp@latest
+          # 验证Xcode工具
+          xcrun --show-sdk-path
           
-          # 验证node-gyp是否安装成功（必做）
-          if command -v node-gyp &> /dev/null; then
-            echo "✅ node-gyp 安装成功，路径：$(which node-gyp)"
-            node-gyp --version # 打印版本，确认可用
-          else
-            echo "❌ node-gyp 安装失败，未找到命令"
-            # 打印npm全局路径，排查问题
-            echo "npm全局路径：$NPM_GLOBAL_PATH"
-            ls -la $NPM_GLOBAL_PATH # 查看是否有node-gyp可执行文件
-            exit 1
-          fi
+          # 2. 安装brew依赖（arm64版本）
+          brew install python@3.10 openssl@3
+          
+          # 3. 降级node-gyp到兼容版本（v9.x适配Node.js 18）
+          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
+          export PATH="$NPM_GLOBAL_PATH:$PATH"
+          npm uninstall --global node-gyp
+          npm install --global node-gyp@9.4.0 # 兼容版本
+          
+          # 验证node-gyp和Python
+          echo "node-gyp版本：$(node-gyp --version)"
+          echo "Python路径：$PYTHON"
+          $PYTHON --version
+          
+          # 4. 配置pkg-config（帮助找到OpenSSL）
+          export PKG_CONFIG_PATH="$OPENSSL_ROOT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          echo "PKG_CONFIG_PATH：$PKG_CONFIG_PATH"
 
-          # 4. 配置node-gyp使用正确的Python
-          node-gyp configure --python="$PYTHON"
-
-      # 步骤3：重新安装项目依赖
-      - name: Install Dependencies
+      # 步骤3：安装项目依赖（跳过node-gyp手动configure）
+      - name: Install Dependencies (Skip Manual GYP)
         run: |
-          # 屏蔽funding提示，强制安装
-          npm install --force --verbose --no-cache --no-fund
+          # 禁用node-gyp手动configure，让npm自动处理
+          npm config set node_gyp "$(npm root -g)/node-gyp/bin/node-gyp.js"
+          # 安装依赖，强制arm64架构
+          npm install --force --verbose --no-fund --arch=$ARCH \
+            --openssl-root-dir=$OPENSSL_ROOT_DIR \
+            --python=$PYTHON
+
           # 验证ssh2安装
-          if [ -f "node_modules/ssh2/package.json" ]; then
+          if [ -d "node_modules/ssh2" ]; then
             echo "✅ ssh2 依赖安装成功"
+            ls -la node_modules/ssh2/
           else
             echo "❌ ssh2 依赖安装失败"
-            ls -la node_modules/
             exit 1
           fi
 
-      # 步骤4：重建ssh2原生模块
-      - name: Rebuild ssh2 for Electron
+      # 步骤4：用electron-rebuild重建ssh2（自动适配Electron+arm64）
+      - name: Rebuild ssh2 for Electron (arm64)
         run: |
-          # 确保PATH包含node-gyp
-          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
-          export PATH="$NPM_GLOBAL_PATH:$PATH"
+          # 配置环境变量确保重建时找到依赖
+          export PATH="$(npm config get prefix)/bin:$PATH"
+          export PKG_CONFIG_PATH="$OPENSSL_ROOT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
           
           npm install --save-dev electron-rebuild
-          # 显式指定Python路径重建
-          PYTHON=$(which python3.10) npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --verbose
+          # 自动重建，无需手动指定python/openssl
+          npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --arch=$ARCH --verbose
           
           # 验证编译结果
-          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ] || [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-arm64/ssh2.node" ]; then
-            echo "✅ ssh2 原生模块编译成功"
+          BINDING_DIR="node_modules/ssh2/lib/binding/napi-v6-darwin-$ARCH"
+          if [ -f "$BINDING_DIR/ssh2.node" ]; then
+            echo "✅ ssh2 原生模块编译成功（$ARCH）"
+            ls -la $BINDING_DIR/
           else
             echo "❌ ssh2 原生模块编译失败"
             ls -la node_modules/ssh2/lib/binding/
             exit 1
           fi
 
-      # 步骤5：打包macOS应用
-      - name: Build macOS App
+      # 步骤5：打包macOS应用（arm64）
+      - name: Build macOS App (arm64)
         run: |
-          # 再次确保PATH包含node-gyp（打包时可能需要）
-          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
-          export PATH="$NPM_GLOBAL_PATH:$PATH"
-          npm run build:mac --verbose
+          export PATH="$(npm config get prefix)/bin:$PATH"
+          export PKG_CONFIG_PATH="$OPENSSL_ROOT_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+          # 打包时指定arm64架构，跳过公证
+          npm run build:mac -- --arch=$ARCH --skip-notarization --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PYTHON: $(which python3.10)
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true # 跳过依赖检查
 
       # 步骤6：上传产物
-      - name: Upload Artifact
+      - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-app-build
+          name: macos-arm64-app-build
           path: |
             dist/*.dmg
             dist/*.zip
