@@ -44,8 +44,7 @@
         "to": "assets/"
       }
     ],
-    "npmRebuild": false,
-    // "buildDependenciesFromSource": true
+    "npmRebuild": false
   },
   "dependencies": {
     "install": "^0.13.0",
