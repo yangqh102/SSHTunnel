@@ -6,23 +6,29 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# 运行作业
 jobs:
   build-macos:
+    # 必须指定 macOS 系统，Electron打包mac应用只能在macOS环境执行
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 30 # 超时时间，防止卡死
 
     steps:
+      # 步骤1：检出仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # 步骤2：配置Node.js环境 (Electron39推荐Node18，兼容所有依赖)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
-          cache: 'npm'
+          cache: 'npm' # 自动缓存 node_modules 依赖，加速安装
 
+      # 步骤3：缓存大文件（重中之重），提升构建速度90%
+      # 缓存 Electron本体/electron-builder缓存/ssh2原生模块编译缓存
       - name: Cache build dependencies
         uses: actions/cache@v4
         with:
@@ -35,32 +41,29 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      # 步骤4：安装macOS编译依赖（原生模块必须，ssh2需要xcode编译工具链）
       - name: Install macOS build tools
         run: |
-          xcode-select --install || true
-          brew install libusb || true
-          # 新增：安装node-gyp依赖（解决原生模块编译）
-          npm install -g node-gyp
+          xcode-select --install || true # 安装Xcode命令行工具，已安装则忽略报错
+          brew install libusb || true    # 可选：兼容部分原生模块编译
 
+      # 步骤5：安装项目依赖 (适配你的package.json，自动rebuild原生模块)
       - name: Install dependencies
         run: npm install
         env:
+          # 解决electron下载慢的问题，配置国内镜像源
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
-      - name: Rebuild native modules (ssh2) // 新增：执行手动重建脚本
-        run: npm run prebuild
-        env:
-          # 强制指定架构，避免路径解析错误
-          ARCH: arm64
-          ELECTRON_VERSION: 39.2.7
-
+      # 步骤6：执行打包命令（直接调用你package.json里的build:mac脚本）
       - name: Build macOS App (dmg + zip)
         run: npm run build:mac
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          ARCH: arm64
+          CSC_IDENTITY_AUTO_DISCOVERY: false # 关闭Mac签名自动检测（本地打包无需签名）
+          # 如果你需要签名，这里配置签名证书相关环境变量即可
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 步骤7：上传打包产物 (dist目录下的所有安装包)
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -69,4 +72,4 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.dmg.blockmap
-          retention-days: 15
+          retention-days: 15 # 产物保留15天，节省存储空间
