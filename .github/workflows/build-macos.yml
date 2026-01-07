@@ -1,4 +1,3 @@
-# 工作流名称
 name: Build macOS Electron App
 
 on:
@@ -30,33 +29,39 @@ jobs:
             ~/.npm
             ~/.cache/electron
             ~/.cache/electron-builder
-            node_modules/.cache
+            node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      - name: Install macOS build tools
+      - name: Install build tools
         run: |
           xcode-select --install || true
-          brew install libusb || true
-          # 新增：安装node-gyp依赖（解决原生模块编译）
+          # 安装必要的编译工具
           npm install -g node-gyp
+          brew install pkg-config autoconf automake libtool || true
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm ci --verbose
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+          # 设置node-gyp缓存
+          npm_config_cache: "$HOME/.npm"
 
-      - name: Rebuild native modules (ssh2) // 新增：执行手动重建脚本
-        run: npm install --save-dev electron-rebuild
+      - name: Rebuild native modules
+        run: |
+          # 手动重建ssh2模块
+          npx electron-rebuild -v 39.2.7 -a arm64 -p -t dev,prod -m ssh2
         env:
-          # 强制指定架构，避免路径解析错误
+          # 明确设置架构和Electron版本
           ARCH: arm64
           ELECTRON_VERSION: 39.2.7
 
-      - name: Build macOS App (dmg + zip)
-        run: npm run build:mac
+      - name: Build macOS App
+        run: |
+          npm run build:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ARCH: arm64
