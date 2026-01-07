@@ -25,8 +25,12 @@
     },
     "mac": {
       "target": ["dmg", "zip"],
+      "arch": ["arm64"],
       "icon": "assets/app-icon.icns",
-      "category": "Utility"
+      "skipNotarization": true,
+      "skipSign": true,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "files": [
       "**/*"
