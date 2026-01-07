@@ -23,18 +23,33 @@ jobs:
           node-version: 18.x
           cache: 'npm' # 缓存npm依赖，加速构建
 
-      # 步骤3：安装项目依赖
+      # 步骤3：安装Windows原生编译工具（解决ssh2原生模块编译）
+      - name: Install Windows Build Tools
+        uses: ilammy/msvc-dev-cmd@v1 # 配置VS编译环境
+      - name: Install Python (for node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # node-gyp兼容的Python版本
+
+      # 步骤4：安装项目依赖
       - name: Install Dependencies
         run: |
+          npm install --global node-gyp
           npm install # 安装package.json中的依赖
 
-      # 步骤4：打包Windows exe（新增env传递GH_TOKEN）
+      # 步骤5：重建ssh2原生模块（适配Electron版本）
+      - name: Rebuild Native Modules (ssh2)
+        run: |
+          npm install --save-dev electron-rebuild
+          npx electron-rebuild -f -w ssh2 # 仅重建Windows平台的ssh2
+
+      # 步骤6：打包Windows exe（新增env传递GH_TOKEN）
       - name: Build Electron App for Windows
         run: npm run build:win
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤5：上传打包产物（exe安装包）到GitHub Artifacts
+      # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
