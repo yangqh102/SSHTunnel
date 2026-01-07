@@ -1,143 +1,63 @@
-name: Build macOS Electron App (ARM64 - Final Fix)
+name: Build macOS Electron App (ARM64)
 on:
   push:
     branches: [ main ]
   workflow_dispatch: # 手动触发优先级最高
 
+# 唯一任务：macOS打包
 jobs:
   build-macos:
+    # 指定GitHub的macOS Runner（最新版，默认包含arm64/x64环境）
     runs-on: macos-latest
-    env:
-      # 全局环境变量 - 所有编译依赖的固定路径 (ARM64专用)
-      ARCH: arm64
-      OPENSSL_ROOT_DIR: /opt/homebrew/opt/openssl@3
-      OPENSSL_LIB_DIR: /opt/homebrew/opt/openssl@3/lib
-      OPENSSL_INCLUDE_DIR: /opt/homebrew/opt/openssl@3/include
-      PKG_CONFIG_PATH: /opt/homebrew/opt/openssl@3/lib/pkgconfig
-      # 禁用无用提示
-      HOMEBREW_NO_INSTALL_CLEANUP: 1
-      HOMEBREW_NO_ENV_HINTS: 1
+    timeout-minutes: 30  # 避免构建超时（macOS打包稍慢）
 
     steps:
-      - name: Checkout code
+      # 1. 检出仓库代码（包含完整提交历史）
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 可选：如果需要版本号关联提交，建议开启
 
-      - name: Setup Node.js 18.x (ARM64)
+      # 2. 设置Node.js环境（匹配Electron 39.x兼容的Node版本）
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18.x
-          architecture: arm64
-          cache: '' # 彻底禁用缓存，杜绝缓存污染
+          node-version: 20.x  # Electron 39.x推荐Node 20.x
+          cache: 'npm'  # 缓存npm依赖，大幅加速后续构建
 
-      # ========== 步骤1：终极修复 Xcode Command Line Tools 路径问题 (核心中的核心) ==========
-      - name: Fix Xcode CLT Path & Install (FORCE CORRECT LOCATION)
-        run: |
-          # 1. 彻底卸载旧的CLT（无论在哪）
-          sudo rm -rf /Library/Developer/CommandLineTools
-          sudo rm -rf /Applications/Xcode.app/Contents/Developer
-          # 2. 强制重装CLT到固定路径 /Library/Developer/CommandLineTools (brew强制要求)
-          xcode-select --install || true
-          # 3. 验证CLT路径是否正确
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          xcode-select -p
-          # 4. 验证CLT是否可用
-          gcc --version
-          make --version
-          echo "✅ Xcode CLT 安装成功，路径正确！"
-
-      # ========== 步骤2：安装Python3.10 + OpenSSL@3 (此时brew安装不会报错) ==========
-      - name: Install Python3.10 & OpenSSL@3 (ARM64)
-        run: |
-          # 更新brew并安装依赖，强制覆盖
-          brew update --quiet
-          brew install --force --overwrite python@3.10 openssl@3
-          # 配置Python3.10全局可用 + 软链接
-          export PATH="/opt/homebrew/opt/python@3.10/bin:$PATH"
-          sudo ln -sf /opt/homebrew/bin/python3.10 /usr/local/bin/python3
-          sudo ln -sf /opt/homebrew/bin/pip3.10 /usr/local/bin/pip3
-          # 验证Python安装
-          python3 --version
-          which python3
-          echo "✅ Python3.10 安装成功！"
-          # 验证OpenSSL
-          openssl version
-          which openssl
-          echo "✅ OpenSSL@3 安装成功！"
-
-      # ========== 步骤3：安装兼容版node-gyp + 配置环境变量 ==========
-      - name: Install node-gyp@9.4.0 (兼容版) + Fix PATH
-        run: |
-          # 配置npm全局路径
-          NPM_GLOBAL=$(npm config get prefix)/bin
-          export PATH="$NPM_GLOBAL:/opt/homebrew/opt/python@3.10/bin:$PATH"
-          # 卸载高版本，强制安装9.4.0 (唯一适配版本)
-          npm uninstall -g node-gyp || true
-          npm install -g node-gyp@9.4.0
-          # 验证node-gyp
-          node-gyp --version
-          which node-gyp
-          echo "✅ node-gyp@9.4.0 安装成功！"
-          # 关键配置：让npm优先使用这个兼容版node-gyp
-          npm config set node_gyp "$(npm root -g)/node-gyp/bin/node-gyp.js"
-
-      # ========== 步骤4：清理项目缓存 + 安装依赖 (无任何报错) ==========
-      - name: Clean Project & Install Dependencies
-        run: |
-          # 彻底清理旧依赖
-          rm -rf node_modules package-lock.json yarn.lock
-          npm cache clean --force
-          # 配置全局PATH
-          export PATH="$(npm config get prefix)/bin:/opt/homebrew/opt/python@3.10/bin:$PATH"
-          # 安装依赖，屏蔽funding提示，强制ARM64架构
-          npm install --force --verbose --no-fund --arch=${{ env.ARCH }}
-          # 必做：验证ssh2是否完整安装
-          if [ -f "node_modules/ssh2/package.json" ]; then
-            echo "✅ ssh2 依赖安装成功！路径：node_modules/ssh2"
-          else
-            echo "❌ ssh2 安装失败！"
-            ls -la node_modules/
-            exit 1
-          fi
-
-      # ========== 步骤5：重建ssh2原生模块 (ARM64适配Electron 28) ==========
-      - name: Rebuild ssh2 Native Module (ARM64 + Electron 28)
-        run: |
-          # 配置所有编译依赖的环境变量
-          export PATH="$(npm config get prefix)/bin:/opt/homebrew/opt/python@3.10/bin:$PATH"
-          export CC=$(which gcc)
-          export CXX=$(which g++)
-          # 安装electron-rebuild
-          npm install --save-dev electron-rebuild
-          # 强制重建ssh2，自动适配所有配置，无手动指定
-          npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --arch=${{ env.ARCH }} --verbose
-          # 验证编译结果
-          BINDING_FILE="node_modules/ssh2/lib/binding/napi-v6-darwin-${{ env.ARCH }}/ssh2.node"
-          if [ -f "$BINDING_FILE" ]; then
-            echo "✅ ssh2 原生模块编译成功！二进制文件存在：$BINDING_FILE"
-          else
-            echo "❌ ssh2 编译失败！"
-            ls -la node_modules/ssh2/lib/binding/
-            exit 1
-          fi
-
-      # ========== 步骤6：打包MacOS ARM64应用 (.app + .dmg) ==========
-      - name: Build macOS App (ARM64 - No Sign/Notarize)
-        run: |
-          export PATH="$(npm config get prefix)/bin:/opt/homebrew/opt/python@3.10/bin:$PATH"
-          # 打包命令，跳过签名/公证，纯测试可用，无任何弹窗报错
-          npm run build:mac -- --arch=${{ env.ARCH }} --skip-notarization --skip-sign --verbose
+      # 3. 安装项目依赖（适配macOS）
+      - name: Install dependencies
+        run: npm install
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ELECTRON_BUILDER_PUBLISH: never
-          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
+          # 关键：加速Electron二进制包下载（解决macOS下载慢问题）
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_CUSTOM_DIR: ${{ env.ELECTRON_VERSION }}
+          # 适配ssh2的native模块编译（macOS）
+          npm_config_build_from_source: true
 
-      # ========== 步骤7：上传打包产物 ==========
-      - name: Upload macOS ARM64 Build Artifact
+      # 4. 执行macOS打包命令（对应package.json中的build:mac）
+      - name: Build macOS app
+        run: npm run build:mac
+        env:
+          # 传递环境变量，确保打包时使用arm64架构
+          ARCH: arm64
+
+      # 5. 验证打包产物（可选：检查dist目录是否有文件）
+      - name: Verify build output
+        run: |
+          ls -la dist/
+          if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
+            echo "打包产物为空，构建失败！"
+            exit 1
+          fi
+
+      # 6. 上传macOS打包产物（方便下载）
+      - name: Upload macOS build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64-ssh2-app
+          name: local-overleaf-macos-build  # 产物名称，清晰易识别
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/mac/
-          retention-days: 30
+            dist/*.app  # 可选：上传app本体（如果需要）
+          if-no-files-found: error  # 无产物则标记构建失败
