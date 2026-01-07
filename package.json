@@ -26,7 +26,8 @@
     "mac": {
       "target": ["dmg", "zip"],
       "icon": "assets/app-icon.icns",
-      "category": "Utility"
+      "category": "Utility",
+      "arch": ["arm64"]
     },
     "files": [
       "**/*"
