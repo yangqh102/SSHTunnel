@@ -37,31 +37,46 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
             node_modules/.cache
+            ~/.node-gyp
+            ./node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # 步骤4：安装macOS编译依赖（原生模块必须，ssh2需要xcode编译工具链）
+      # 步骤4：安装macOS编译依赖（关键：补充node-gyp所需依赖）
       - name: Install macOS build tools
         run: |
-          xcode-select --install || true # 安装Xcode命令行工具，已安装则忽略报错
-          brew install libusb || true    # 可选：兼容部分原生模块编译
+          # 强制安装Xcode命令行工具（修复编译链）
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          # 安装node-gyp依赖（python3、libusb、make）
+          brew install python3 libusb make || true
+          # 配置node-gyp使用python3
+          npm config set python $(which python3)
+          # 安装Xcode签名工具（可选，避免编译警告）
+          brew install codesign || true
 
-      # 步骤5：安装项目依赖 (适配你的package.json，自动rebuild原生模块)
+      # 步骤5：安装项目依赖 (适配你的package.json，手动重建原生模块)
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install
+          # 显式重建ssh2原生模块（指定Electron版本，避免路径解析错误）
+          npx electron-rebuild -f -w ssh2 --version 39.2.7
         env:
           # 解决electron下载慢的问题，配置国内镜像源
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+          # 配置node-gyp编译环境
+          CXXFLAGS: "-mmacosx-version-min=10.15"
+          LDFLAGS: "-mmacosx-version-min=10.15"
 
       # 步骤6：执行打包命令（直接调用你package.json里的build:mac脚本）
       - name: Build macOS App (dmg + zip)
         run: npm run build:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # 关闭Mac签名自动检测（本地打包无需签名）
-          # 如果你需要签名，这里配置签名证书相关环境变量即可
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 禁用asar压缩调试（可选，排查路径问题）
+          # ASAR: false
 
       # 步骤7：上传打包产物 (dist目录下的所有安装包)
       - name: Upload build artifacts
