@@ -21,16 +21,12 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "assets/app-icon.png"
+      "icon": "assets/app-icon.ico"
     },
     "mac": {
       "target": ["dmg", "zip"],
-      "arch": ["arm64"],
       "icon": "assets/app-icon.icns",
-      "skipNotarization": true,
-      "skipSign": true,
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "category": "Utility"
     },
     "files": [
       "**/*"
