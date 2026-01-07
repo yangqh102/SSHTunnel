@@ -24,7 +24,7 @@ const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
 // ====================== 2. Global Variables: Save SSH connection and local port listening instances ======================
 let sshClient = null;
 let localServer = null;
-const LOCAL_PORT = 8008; // Local forwarding port
+const LOCAL_PORT = 80; // Local forwarding port
 const REMOTE_HOST = '127.0.0.1'; // Forwarding target on server side (127.0.0.1 for local server)
 const REMOTE_PORT = 8008; // Target port on server
 
