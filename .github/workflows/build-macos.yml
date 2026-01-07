@@ -1,7 +1,7 @@
 # 工作流名称
 name: Build macOS Electron App
 
-# 触发条件：推送到main分支，或手动触发（和Windows版保持一致）
+# 触发条件：推送到main分支，或手动触发
 on:
   push:
     branches: [ main ]
@@ -10,63 +10,69 @@ on:
 # 作业配置：在macOS runner上执行
 jobs:
   build-macos:
-    runs-on: macos-latest # 使用GitHub的macOS最新版虚拟机（自带Xcode编译环境）
-    timeout-minutes: 30 # macOS打包稍慢，延长超时时间避免失败
+    runs-on: macos-latest
+    timeout-minutes: 30 # 延长超时时间
 
     steps:
-      # 步骤1：拉取仓库代码（和Windows版一致）
+      # 步骤1：拉取仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2：安装Node.js（匹配Electron兼容版本，和Windows版保持18.x，也可升级为20.x）
+      # 步骤2：安装Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18.x # 兼容Electron 28+，若用Electron 39+可改为20.x
-          cache: 'npm' # 缓存npm依赖，加速构建
+          node-version: 18.x
+          cache: 'npm'
 
-      # 步骤3：安装macOS原生编译依赖（替代Windows的msvc-dev-cmd）
+      # 步骤3：安装macOS编译依赖
       - name: Install macOS Build Dependencies
         run: |
-          # 安装Xcode命令行工具（编译ssh2等原生模块必需）
-          xcode-select --install || true # 已安装则忽略报错
-          # 安装Homebrew依赖（若有需要，可选）
-          brew install libusb || true
+          # 确保Xcode命令行工具安装完成（忽略已安装的报错）
+          if ! xcode-select -p; then
+            xcode-select --install || true
+          fi
+          # 安装编译原生模块所需的依赖（可选但建议）
+          brew install openssl || true
 
-      # 步骤4：安装项目依赖（适配macOS，增加Electron镜像加速）
+      # 步骤4：安装项目依赖（显式指定Electron版本，避免识别错误）
       - name: Install Dependencies
         run: |
-          npm install --global node-gyp # 确保node-gyp最新，适配macOS
-          npm install # 安装package.json中的依赖
+          # 全局安装node-gyp和electron-rebuild（提前安装避免路径问题）
+          npm install --global node-gyp electron-rebuild
+          # 安装项目依赖，加速Electron下载
+          npm install
         env:
-          # 加速Electron二进制包下载（解决macOS下载慢问题）
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          ELECTRON_CUSTOM_DIR: ${{ env.ELECTRON_VERSION }}
-          # 强制从源码构建原生模块（适配macOS arm64架构）
+          # 显式指定Electron版本（从package.json读取，避免自动识别错误）
+          ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
           npm_config_build_from_source: true
 
-      # 步骤5：重建ssh2原生模块（适配macOS arm64架构）
+      # 步骤5：修复核心错误——正确重建ssh2原生模块
       - name: Rebuild Native Modules (ssh2)
         run: |
-          npm install --save-dev electron-rebuild
-          # 仅重建macOS平台的ssh2，指定架构为arm64（适配Apple Silicon）
-          npx electron-rebuild -f -m macos -a arm64 ssh2
+          # 正确写法：无需指定-m macos（自动识别平台），仅指定架构arm64
+          # --force: 强制重建，--module: 指定要重建的模块为ssh2
+          npx electron-rebuild --force --arch arm64 --module ssh2
+          # 验证重建结果：检查ssh2的.node文件是否存在
+          ls -la node_modules/ssh2/lib/binding/electron-v*/darwin-arm64/
 
-      # 步骤6：打包macOS安装包（dmg/zip格式）
+      # 步骤6：打包macOS安装包
       - name: Build Electron App for macOS
         run: npm run build:mac
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 强制指定macOS架构，避免兼容问题
           ARCH: arm64
+          # 再次传递Electron版本，确保打包时识别正确
+          ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
 
-      # 步骤7：上传打包产物到GitHub Artifacts
+      # 步骤7：上传打包产物
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-build # 产物名称，区分Windows版
-          path: | # 匹配macOS打包产物路径
-            dist/*.dmg # dmg安装镜像（核心产物）
-            dist/*.zip # zip压缩包（备用）
-            dist/mac-arm64/ # 免安装版app文件夹（可选）
-          retention-days: 30 # 产物保留30天
+          name: macos-build
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/mac-arm64/
+          retention-days: 30
