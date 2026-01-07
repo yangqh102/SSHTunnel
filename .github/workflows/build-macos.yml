@@ -1,0 +1,68 @@
+# macOS 应用打包工作流
+name: Build macOS Electron App
+
+# 触发条件：推送到main分支 / 手动触发
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build-macos:
+    runs-on: macos-latest # 必须用macOS运行器（仅macOS能打包macOS应用）
+    steps:
+      # 步骤1：拉取仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤2：安装Node.js（匹配Electron版本，选18.x）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm' # 缓存依赖，加速构建
+
+      # 步骤3：安装macOS原生编译工具（解决ssh2编译）
+      - name: Install macOS Build Tools
+        run: |
+          # 安装Xcode命令行工具（编译C++原生模块必需）
+          xcode-select --install || true # || true避免已安装时报错
+          # 安装homebrew依赖（若需要）
+          brew install python3
+          npm install --global node-gyp@latest
+
+      # 步骤4：安装项目依赖
+      - name: Install Dependencies
+        run: npm install --verbose # --verbose显示日志，方便排查
+
+      # 步骤5：重建ssh2原生模块（适配macOS + Electron）
+      - name: Rebuild Native Modules (ssh2 for macOS)
+        run: |
+          npm install --save-dev electron-rebuild
+          # -m 表示macOS平台，强制重建ssh2
+          npx electron-rebuild -f -m ssh2 --verbose
+          # 验证编译结果
+          if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ]; then
+            echo "✅ ssh2 编译成功（macOS）"
+          else
+            echo "❌ ssh2 编译失败"
+            exit 1
+          fi
+
+      # 步骤6：打包macOS应用（.app + .dmg）
+      - name: Build Electron App for macOS
+        run: npm run build:mac --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BT_TOKEN: ${{ secrets.BT_TOKEN }}
+
+      # 步骤7：上传打包产物到Artifacts
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-build # 产物名称
+          path: | # 打包产物路径
+            dist/*.dmg # dmg安装镜像
+            dist/*.zip # 压缩的app包
+            dist/mac/ # .app应用包文件夹
+          retention-days: 30 # 产物保留30天

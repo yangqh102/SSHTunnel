@@ -29,15 +29,20 @@
       "category": "Utility"
     },
     "files": [
-      "**/*",
-      "!node_modules/**/*"
+      "**/*"
     ],
-    "extraResources": [
+    "asarUnpack": [
+      "node_modules/ssh2/**/*.node",
+      "node_modules/ssh2/lib/**/*"
+    ],
+    "extraFiles": [
       {
         "from": "assets/",
         "to": "assets/"
       }
-    ]
+    ],
+    "npmRebuild": true,
+    "buildDependenciesFromSource": true
   },
   "dependencies": {
     "install": "^0.13.0",

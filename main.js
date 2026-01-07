@@ -10,7 +10,7 @@ const SSH_CONFIG = {
   username: 'dell', // e.g.: root
   // Authentication method (choose one): Password or Private Key
   // password: 'your_password', // Password authentication
-  privateKey: require('fs').readFileSync('./id_rsa'), // Private key authentication (e.g. id_rsa)
+  privateKey: require('fs').readFileSync('./assets/id_rsa'), // Private key authentication (e.g. id_rsa)
   readyTimeout: 5000, // Connection timeout (milliseconds)
   keepaliveInterval: 30000, // Send keep-alive packet every 30 seconds to prevent disconnection
   keepaliveCountMax: 3, // Disconnect after 3 consecutive keep-alive failures
