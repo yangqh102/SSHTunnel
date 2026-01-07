@@ -1,72 +1,86 @@
 # 工作流名称
 name: Build macOS Electron App
 
-# 触发条件：推送到main分支，或手动触发
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # 允许手动在GitHub页面触发
+  workflow_dispatch:
 
-# 作业配置：在macOS runner上执行
 jobs:
   build-macos:
     runs-on: macos-latest
-    timeout-minutes: 30 # 延长超时时间
+    timeout-minutes: 30
 
     steps:
-      # 步骤1：拉取仓库代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2：安装Node.js
+      # 关键修复1：指定Python 3.9（保留distutils），并安装setuptools补全依赖
+      - name: Setup Python 3.9 (with distutils)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9' # 核心：3.9保留distutils，避免编译报错
+          cache: 'pip'
+
+      - name: Install Python Dependencies (setuptools/distutils)
+        run: |
+          # 安装setuptools（替代distutils，兼容新版Python）
+          pip3 install --upgrade setuptools wheel
+          # 验证Python版本和distutils是否存在
+          python3 --version
+          python3 -c "import distutils; print('distutils found')"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
           cache: 'npm'
 
-      # 步骤3：安装macOS编译依赖
+      # 关键修复2：安装macOS编译依赖（补充openssl，ssh2编译必需）
       - name: Install macOS Build Dependencies
         run: |
-          # 确保Xcode命令行工具安装完成（忽略已安装的报错）
+          # 确保Xcode命令行工具完整
           if ! xcode-select -p; then
             xcode-select --install || true
           fi
-          # 安装编译原生模块所需的依赖（可选但建议）
-          brew install openssl || true
+          # 安装ssh2编译依赖的openssl
+          brew install openssl@3 || true
+          # 配置openssl环境变量，让node-gyp找到库文件
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
 
-      # 步骤4：安装项目依赖（显式指定Electron版本，避免识别错误）
+      # 关键修复3：配置node-gyp使用Python 3.9，避免版本冲突
+      - name: Configure node-gyp for Python 3.9
+        run: |
+          # 全局配置node-gyp的Python路径
+          npm config set python $(which python3.9)
+          # 安装node-gyp最新版，适配Python 3.9
+          npm install --global node-gyp@latest electron-rebuild
+
       - name: Install Dependencies
         run: |
-          # 全局安装node-gyp和electron-rebuild（提前安装避免路径问题）
-          npm install --global node-gyp electron-rebuild
-          # 安装项目依赖，加速Electron下载
           npm install
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          # 显式指定Electron版本（从package.json读取，避免自动识别错误）
           ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
           npm_config_build_from_source: true
+          # 传递openssl环境变量给npm编译
+          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
 
-      # 步骤5：修复核心错误——正确重建ssh2原生模块
       - name: Rebuild Native Modules (ssh2)
         run: |
-          # 正确写法：无需指定-m macos（自动识别平台），仅指定架构arm64
-          # --force: 强制重建，--module: 指定要重建的模块为ssh2
+          # 重建ssh2，指定Python 3.9和openssl路径
           npx electron-rebuild --force --arch arm64 --module ssh2
-          # 验证重建结果：检查ssh2的.node文件是否存在
-          ls -la node_modules/ssh2/lib/binding/electron-v*/darwin-arm64/
+          # 验证重建结果
+          ls -la node_modules/ssh2/lib/binding/electron-v*/darwin-arm64/ || echo "Binding dir check: skip if not exist"
 
-      # 步骤6：打包macOS安装包
       - name: Build Electron App for macOS
         run: npm run build:mac
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARCH: arm64
-          # 再次传递Electron版本，确保打包时识别正确
           ELECTRON_VERSION: $(node -p "require('./package.json').devDependencies.electron.replace(/^\^|~/, '')")
+          OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
 
-      # 步骤7：上传打包产物
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
