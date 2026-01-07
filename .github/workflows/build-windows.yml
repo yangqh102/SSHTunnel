@@ -48,7 +48,6 @@ jobs:
         run: npm run build:win
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BT_TOKEN: ${{ secrets.BT_TOKEN }}
 
       # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact

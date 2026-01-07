@@ -17,9 +17,9 @@ jobs:
         with:
           node-version: 18.x
           cache: 'npm'
-          cache-dependency-path: '' # 禁用缓存，避免干扰
+          cache-dependency-path: '' # 禁用缓存避免干扰
 
-      # 步骤1：修复macOS权限 + 清理旧依赖/缓存
+      # 步骤1：修复权限 + 清理旧依赖
       - name: Fix Permissions & Clean Cache
         run: |
           sudo chown -R $USER:$GROUP ~/.npm
@@ -28,58 +28,85 @@ jobs:
           rm -rf node_modules
           rm -f package-lock.json yarn.lock
 
-      # 步骤2：安装编译环境（修正Python配置方式）
-      - name: Install Build Tools (Fixed Python Config)
+      # 步骤2：安装编译环境（核心修复node-gyp路径问题）
+      - name: Install Build Tools (Fix node-gyp PATH)
         run: |
-          # 安装Xcode命令行工具
+          # 1. 安装Xcode命令行工具
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
           xcode-select --install || true
-          # 安装Python3（固定版本，避免兼容问题）
+
+          # 2. 安装Python3.10和openssl
           brew install python@3.10 openssl
-          # 配置node-gyp（核心修复：不用npm config，改用环境变量/PATH）
           export PYTHON=$(which python3.10)
           export PATH="$PYTHON:$PATH"
-          # 告诉node-gyp使用指定的Python（替代npm config set python）
-          node-gyp configure --python="$PYTHON"
+
+          # 3. 安装node-gyp并配置PATH（关键！）
+          # 获取npm全局安装路径
+          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
+          # 将npm全局路径加入系统PATH（让终端找到node-gyp）
+          export PATH="$NPM_GLOBAL_PATH:$PATH"
           # 全局安装node-gyp
           npm install --global node-gyp@latest
+          
+          # 验证node-gyp是否安装成功（必做）
+          if command -v node-gyp &> /dev/null; then
+            echo "✅ node-gyp 安装成功，路径：$(which node-gyp)"
+            node-gyp --version # 打印版本，确认可用
+          else
+            echo "❌ node-gyp 安装失败，未找到命令"
+            # 打印npm全局路径，排查问题
+            echo "npm全局路径：$NPM_GLOBAL_PATH"
+            ls -la $NPM_GLOBAL_PATH # 查看是否有node-gyp可执行文件
+            exit 1
+          fi
 
-      # 步骤3：重新安装依赖（无无效npm配置）
+          # 4. 配置node-gyp使用正确的Python
+          node-gyp configure --python="$PYTHON"
+
+      # 步骤3：重新安装项目依赖
       - name: Install Dependencies
         run: |
-          # 强制安装，跳过无效的python配置
-          npm install --force --verbose --no-cache
-          # 验证ssh2是否安装成功
+          # 屏蔽funding提示，强制安装
+          npm install --force --verbose --no-cache --no-fund
+          # 验证ssh2安装
           if [ -f "node_modules/ssh2/package.json" ]; then
-            echo "✅ ssh2 安装成功"
+            echo "✅ ssh2 依赖安装成功"
           else
-            echo "❌ ssh2 安装失败"
+            echo "❌ ssh2 依赖安装失败"
             ls -la node_modules/
             exit 1
           fi
 
-      # 步骤4：重建ssh2（适配Electron）
+      # 步骤4：重建ssh2原生模块
       - name: Rebuild ssh2 for Electron
         run: |
+          # 确保PATH包含node-gyp
+          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
+          export PATH="$NPM_GLOBAL_PATH:$PATH"
+          
           npm install --save-dev electron-rebuild
-          # 显式指定Python路径给electron-rebuild
+          # 显式指定Python路径重建
           PYTHON=$(which python3.10) npx electron-rebuild -f -m ssh2 --electron-version=28.0.0 --verbose
+          
           # 验证编译结果
           if [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-x64/ssh2.node" ] || [ -f "node_modules/ssh2/lib/binding/napi-v6-darwin-arm64/ssh2.node" ]; then
-            echo "✅ ssh2 编译成功"
+            echo "✅ ssh2 原生模块编译成功"
           else
-            echo "❌ ssh2 编译失败"
+            echo "❌ ssh2 原生模块编译失败"
             ls -la node_modules/ssh2/lib/binding/
             exit 1
           fi
 
       # 步骤5：打包macOS应用
       - name: Build macOS App
-        run: npm run build:mac --verbose
+        run: |
+          # 再次确保PATH包含node-gyp（打包时可能需要）
+          NPM_GLOBAL_PATH=$(npm config get prefix)/bin
+          export PATH="$NPM_GLOBAL_PATH:$PATH"
+          npm run build:mac --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BT_TOKEN: ${{ secrets.BT_TOKEN }}
-          PYTHON: $(which python3.10) # 传递Python路径到打包环境
+          PYTHON: $(which python3.10)
 
       # 步骤6：上传产物
       - name: Upload Artifact
