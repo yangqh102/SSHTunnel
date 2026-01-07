@@ -24,7 +24,10 @@
       "icon": "assets/app-icon.ico"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": {
+        "target": "dmg",
+        "arch": ["arm64"]
+      },
       "icon": "assets/app-icon.icns",
       "category": "Utility"
     },
