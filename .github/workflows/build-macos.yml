@@ -52,10 +52,9 @@ jobs:
 
       - name: Rebuild native modules
         run: |
-          # 手动重建ssh2模块
-          npx electron-rebuild -v 39.2.7 -a arm64 -p -t dev,prod -m ssh2
+          # 使用 npm 重建特定模块
+          npm rebuild ssh2 --target=39.2.7 --arch=arm64
         env:
-          # 明确设置架构和Electron版本
           ARCH: arm64
           ELECTRON_VERSION: 39.2.7
 
