@@ -1,149 +1,201 @@
-const { app, BrowserWindow, shell, Menu } = require('electron'); // Added: Import Menu module
+const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
 const net = require('net');
 const { Client } = require('ssh2');
-const path = require('path'); // Added: Import path module to handle icon path
+const path = require('path');
+const fs = require('fs');
 
-// ====================== 1. Configure SSH Connection Info (Replace with your server info) ======================
+// ====================== 1. Configuration ======================
 const SSH_CONFIG = {
-  host: '222.212.86.164', // e.g.: 192.168.1.100
-  port: 10007, // Default SSH port
-  username: 'dell', // e.g.: root
-  // Authentication method (choose one): Password or Private Key
-  // password: 'your_password', // Password authentication
-  privateKey: require('fs').readFileSync('./assets/id_rsa'), // Private key authentication (e.g. id_rsa)
-  readyTimeout: 5000, // Connection timeout (milliseconds)
-  keepaliveInterval: 30000, // Send keep-alive packet every 30 seconds to prevent disconnection
-  keepaliveCountMax: 3, // Disconnect after 3 consecutive keep-alive failures
+  host: '222.212.86.164',
+  port: 10007,
+  username: 'dell',
+  privateKey: null, 
+  readyTimeout: 5000,
+  keepaliveInterval: 30000,
+  keepaliveCountMax: 3,
 };
 
-// ====================== Added: App Icon Path Configuration (Replace with your icon file path) ======================
-// It is recommended to place the icon file in the assets folder of the project root directory, e.g.: assets/app-icon.png
-// Note: .ico format is recommended for Windows, .icns format for macOS, PNG format is compatible with most scenarios
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
+const PRIVATE_KEY_PATH = path.join(__dirname, 'assets', 'id_rsa');
+const INDEX_HTML_PATH = path.join(__dirname, 'index.html'); 
 
-// ====================== 2. Global Variables: Save SSH connection and local port listening instances ======================
+// ====================== 2. Global Variables ======================
 let sshClient = null;
 let localServer = null;
-const LOCAL_PORT = 80; // Local forwarding port
-const REMOTE_HOST = '127.0.0.1'; // Forwarding target on server side (127.0.0.1 for local server)
-const REMOTE_PORT = 8008; // Target port on server
+let mainWindow = null; // This variable will point to whichever window is currently active
+const LOCAL_PORT = 80;
+const REMOTE_HOST = '127.0.0.1';
+const REMOTE_PORT = 8008;
 
-// ====================== 3. Implement SSH Port Forwarding ======================
+// ====================== 3. SSH Tunnel Setup ======================
 function setupSSHTunneling() {
   return new Promise((resolve, reject) => {
-    // 1. Create SSH client instance
     sshClient = new Client();
-
-    // 2. Listen to SSH connection events
     sshClient
       .on('ready', () => {
         console.log('SSH connection successful, starting port forwarding...');
-        
-        // 3. Listen to local port 8008
         localServer = net.createServer((localSocket) => {
-          // When a new connection is established to local port, forward it to server via SSH
-          sshClient.forwardOut(
-            'localhost', // Source address (local)
-            LOCAL_PORT,  // Source port
-            REMOTE_HOST, // Target address (server side)
-            REMOTE_PORT, // Target port
-            (err, sshStream) => {
-              if (err) {
-                console.error('Port forwarding failed:', err.message);
-                localSocket.end();
-                return;
-              }
-
-              // Establish bidirectional data transmission between local socket and SSH stream
-              localSocket.pipe(sshStream).pipe(localSocket);
-
-              // Error handling
-              sshStream.on('error', (err) => {
-                console.error('SSH stream error:', err.message);
-                localSocket.end();
-              });
-              localSocket.on('error', (err) => {
-                console.error('Local socket error:', err.message);
-                sshStream.end();
-              });
+          sshClient.forwardOut('localhost', LOCAL_PORT, REMOTE_HOST, REMOTE_PORT, (err, sshStream) => {
+            if (err) {
+              console.error('Port forwarding failed:', err.message);
+              localSocket.end();
+              return;
             }
-          );
+            localSocket.pipe(sshStream).pipe(localSocket);
+            sshStream.on('error', (err) => { console.error('SSH stream error:', err.message); localSocket.end(); });
+            localSocket.on('error', (err) => { console.error('Local socket error:', err.message); sshStream.end(); });
+          });
         }).listen(LOCAL_PORT, 'localhost', () => {
           console.log(`Local port forwarding successful: localhost:${LOCAL_PORT} -> ${SSH_CONFIG.host}:${REMOTE_PORT}`);
           resolve();
         });
-
-        // Local port listening error handling (e.g. port occupied)
-        localServer.on('error', (err) => {
-          reject(`Failed to listen on local port ${LOCAL_PORT}: ${err.message}`);
-        });
+        localServer.on('error', (err) => { reject(`Failed to listen on local port ${LOCAL_PORT}: ${err.message}`); });
       })
-      .on('error', (err) => {
-        reject(`SSH connection failed: ${err.message}`);
-      })
-      .on('end', () => {
-        console.log('SSH connection disconnected');
-      })
-      .connect(SSH_CONFIG); // Start SSH connection
+      .on('error', (err) => { reject(`SSH connection failed: ${err.message}`); })
+      .on('end', () => { console.log('SSH connection disconnected'); })
+      .connect(SSH_CONFIG);
   });
 }
 
-// ====================== 4. Create Electron Window ======================
-async function createElectronWindow() {
-  // Added: Close the application menu bar (global effect)
+// ====================== 4. Create Main Application Window ======================
+async function createMainWindow() {
   Menu.setApplicationMenu(null);
-
-  // Create browser window
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: APP_ICON_PATH, // Added: Set window icon
-    webPreferences: {
-      nodeIntegration: false, // Security best practice: Disable node integration
-      contextIsolation: true, // Enable context isolation
-      sandbox: false // Allow network access
-    }
+    icon: APP_ICON_PATH,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
   });
 
-  // Core: Intercept all new window open requests and force display in Electron
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    // Load new URL in current window (or create new window: new BrowserWindow().loadURL(details.url))
     mainWindow.loadURL(details.url);
-    // Prevent opening in system browser
     return { action: 'deny' };
   });
 
-  // Load the page of forwarded local port (Core: Access forwarded port 8008)
   await mainWindow.loadURL(`http://localhost:${LOCAL_PORT}`);
-
-  // Optional: Open developer tools
   // mainWindow.webContents.openDevTools();
 
-  // Clean up resources when window is closed
-  mainWindow.on('closed', () => {
-    if (sshClient) sshClient.end();
-    if (localServer) localServer.close();
-  });
+  // Clean up resources when this specific window is closed
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// ====================== 5. App Lifecycle Management ======================
-app.whenReady().then(async () => {
-  try {
-    // Establish SSH port forwarding first, then create window
-    await setupSSHTunneling();
-    await createElectronWindow();
+// ====================== 5. Create Setup Window (Wizard) ======================
+function createSetupWindow() {
+  Menu.setApplicationMenu(null);
+  mainWindow = new BrowserWindow({
+    width: 600,
+    height: 400,
+    icon: APP_ICON_PATH,
+    resizable: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js') 
+    }
+  });
 
-    // Recreate window when Electron is activated (macOS feature)
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createElectronWindow();
-    });
+  mainWindow.loadFile(INDEX_HTML_PATH); 
+  // mainWindow.webContents.openDevTools();
+
+  mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+// ====================== 6. IPC Handler (FIXED LOGIC) ======================
+const { ipcMain } = require('electron');
+ipcMain.handle('select-private-key', async () => {
+  // 1. Open File Dialog
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select SSH Private Key (id_rsa)',
+    defaultPath: path.join(app.getPath('home'), '.ssh'),
+    properties: ['openFile'],
+    filters: [{ name: 'Private Key Files', extensions: ['*'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+
+  if (canceled || filePaths.length === 0) {
+    return { success: false, message: 'Selection cancelled by user.' };
+  }
+
+  const selectedFilePath = filePaths[0];
+  const assetsDir = path.join(__dirname, 'assets');
+  if (!fs.existsSync(assetsDir)) {
+    fs.mkdirSync(assetsDir, { recursive: true });
+  }
+
+  try {
+    // 2. Copy File
+    fs.copyFileSync(selectedFilePath, PRIVATE_KEY_PATH);
+    console.log(`File successfully copied to: ${PRIVATE_KEY_PATH}`);
+    
+    // 3. Update SSH Config
+    SSH_CONFIG.privateKey = fs.readFileSync(PRIVATE_KEY_PATH);
+    
+    // --- CRITICAL FIX START ---
+    
+    // 4. Save reference to the CURRENT window (the Setup Window)
+    // We need this because createMainWindow() will overwrite the global 'mainWindow' variable
+    const setupWindowRef = mainWindow;
+
+    // 5. Start the Main Application Logic (SSH + Remote Page)
+    // This runs BEFORE we close the setup window to ensure the app doesn't quit
+    try {
+        await setupSSHTunneling();
+        await createMainWindow(); // This creates the new window and updates global 'mainWindow'
+        console.log('Main application started successfully.');
+    } catch (err) {
+        console.error('Error starting main app:', err);
+        return { success: false, message: `Failed to start app: ${err.message}` };
+    }
+
+    // 6. Close the OLD Setup Window explicitly
+    if (setupWindowRef && !setupWindowRef.isDestroyed()) {
+        setupWindowRef.close();
+    }
+    // --- CRITICAL FIX END ---
+    
+    return { success: true, message: 'Private key updated. Starting application...' };
+    
   } catch (err) {
-    console.error(err);
-    app.quit(); // Exit app if initialization fails
+    console.error('Error copying file:', err);
+    return { success: false, message: `File copy failed: ${err.message}` };
   }
 });
 
-// Quit app when all windows are closed (except macOS)
+// ====================== 7. Core Startup Logic ======================
+async function startMainApplication() {
+  try {
+    await setupSSHTunneling();
+    await createMainWindow();
+  } catch (err) {
+    console.error('Main application startup failed:', err);
+    app.quit();
+  }
+}
+
+app.whenReady().then(async () => {
+  if (fs.existsSync(PRIVATE_KEY_PATH)) {
+    // Case 1: File exists
+    try {
+      SSH_CONFIG.privateKey = fs.readFileSync(PRIVATE_KEY_PATH);
+      console.log('Private key detected, starting directly...');
+      await startMainApplication();
+    } catch (err) {
+      console.error('Failed to read private key file:', err);
+      createSetupWindow();
+    }
+  } else {
+    // Case 2: File does not exist
+    console.log('No private key detected, opening setup wizard...');
+    createSetupWindow();
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createSetupWindow();
+    }
+  });
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     if (sshClient) sshClient.end();
