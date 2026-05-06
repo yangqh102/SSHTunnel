@@ -15,9 +15,9 @@ const SSH_CONFIG = {
   keepaliveCountMax: 3,
 };
 
-const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
-const PRIVATE_KEY_PATH = path.join(__dirname, 'assets', 'id_rsa');
-const INDEX_HTML_PATH = path.join(__dirname, 'index.html'); 
+const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
+const PRIVATE_KEY_PATH = path.join('./', 'assets', 'id_rsa');
+const INDEX_HTML_PATH = path.join('./', 'index.html'); 
 
 // ====================== 2. Global Variables ======================
 let sshClient = null;
