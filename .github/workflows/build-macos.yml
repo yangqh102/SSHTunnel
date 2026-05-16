@@ -53,9 +53,9 @@ jobs:
       - name: Rebuild native modules
         run: |
           # 使用 npm 重建特定模块
-          npm rebuild ssh2 --target=39.2.7 --arch=arm64
+          npm rebuild ssh2 --target=39.2.7 --arch=x64
         env:
-          ARCH: arm64
+          ARCH: x64
           ELECTRON_VERSION: 39.2.7
 
       - name: Build macOS App
@@ -63,7 +63,7 @@ jobs:
           npm run build:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          ARCH: arm64
+          ARCH: x64
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload build artifacts
