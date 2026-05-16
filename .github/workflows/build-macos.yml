@@ -60,7 +60,7 @@ jobs:
 
       - name: Build macOS App
         run: |
-          npm run build:mac
+          npm run build:mac -- --x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ARCH: x64
