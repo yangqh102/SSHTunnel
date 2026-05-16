@@ -16,7 +16,7 @@ const SSH_CONFIG = {
 };
 
 const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
-const PRIVATE_KEY_PATH = path.join('./', 'assets', 'id_rsa');
+const PRIVATE_KEY_PATH = path.join(__dirname, 'assets', 'id_rsa');
 const INDEX_HTML_PATH = path.join('./', 'index.html'); 
 
 // ====================== 2. Global Variables ======================
@@ -124,7 +124,7 @@ ipcMain.handle('select-private-key', async () => {
 
   try {
     // 2. Copy File
-    fs.copyFileSync(selectedFilePath, path.join(__dirname, PRIVATE_KEY_PATH));
+    fs.copyFileSync(selectedFilePath, PRIVATE_KEY_PATH);
     console.log(`File successfully copied to: ${PRIVATE_KEY_PATH}`);
     
     // 3. Update SSH Config
