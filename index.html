@@ -163,22 +163,30 @@
         
         <div id="status"></div>
     </div>
-
-    <script>
-        const selectKeyBtn = document.getElementById('selectKeyBtn');
-        const loginBtn = document.getElementById('loginBtn');
-        const reselectKeyBtn = document.getElementById('reselectKeyBtn');
-        const statusDiv = document.getElementById('status');
-        const setupDesc = document.getElementById('setup-desc');
-        
+<script>
         const remoteSshIpInput = document.getElementById('remoteSshIpInput');
-        // 新增：获取用户名输入框
         const remoteSshUsernameInput = document.getElementById('remoteSshUsernameInput');
         const remoteSshPortInput = document.getElementById('remoteSshPortInput');
         const forwardTargetPortInput = document.getElementById('forwardTargetPortInput');
         const localPortInput = document.getElementById('localPortInput');
 
+        const selectKeyBtn = document.getElementById('selectKeyBtn');
+        const loginBtn = document.getElementById('loginBtn');
+        const reselectKeyBtn = document.getElementById('reselectKeyBtn');
+        const statusDiv = document.getElementById('status');
+        const setupDesc = document.getElementById('setup-desc');
+
+        // 初始化：加载缓存配置 + 密钥状态
         async function initUI() {
+            // 1. 获取缓存的默认配置并填充输入框
+            const defaultConfig = await window.electronAPI.getDefaultConfig();
+            remoteSshIpInput.value = defaultConfig.remoteSshIp;
+            remoteSshUsernameInput.value = defaultConfig.remoteSshUsername;
+            remoteSshPortInput.value = defaultConfig.remoteSshPort;
+            forwardTargetPortInput.value = defaultConfig.forwardTargetPort;
+            localPortInput.value = defaultConfig.localListenPort;
+
+            // 2. 检查密钥保存状态
             const { hasSavedKey } = await window.electronAPI.getSavedKeyStatus();
             if (hasSavedKey) {
                 selectKeyBtn.classList.add('hidden');
@@ -208,7 +216,6 @@
             return ip;
         }
 
-        // 新增：用户名验证逻辑
         function validateUsername(input) {
             const username = input.value.trim();
             if (!username) {
@@ -230,13 +237,11 @@
         function getValidatedConfig() {
             const config = {
                 remoteSshIp: validateIp(remoteSshIpInput.value.trim()),
-                // 新增：加入用户名验证
                 remoteSshUsername: validateUsername(remoteSshUsernameInput),
                 remoteSshPort: validatePort(remoteSshPortInput),
                 forwardTargetPort: validatePort(forwardTargetPortInput),
                 localListenPort: validatePort(localPortInput)
             };
-            // 校验所有必填项
             if (!config.remoteSshIp || !config.remoteSshUsername || !config.remoteSshPort || !config.forwardTargetPort || !config.localListenPort) {
                 return null;
             }
@@ -267,7 +272,6 @@
             updateStatus('Clearing key...');
             await window.electronAPI.clearPrivateKey();
             await initUI();
-            handleSelectKey();
         }
 
         window.addEventListener('DOMContentLoaded', initUI);

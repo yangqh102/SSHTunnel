@@ -8,18 +8,58 @@ const fs = require('fs');
 const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
 const INDEX_HTML_PATH = path.join(__dirname, 'index.html');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'private-key-config.json');
+// 新增：SSH配置缓存文件（持久化保存用户名/IP/端口）
+const SSH_CONFIG_STORE = path.join(app.getPath('userData'), 'ssh-config.json');
 
 // ========================== GLOBAL VARIABLES ==========================
 let sshClient = null;
 let localServer = null;
 let mainWindow = null;
 
-// ALL CONFIGS ARE FROM FRONTEND, NO HARDCODED VALUES
-let SSH_CONFIG = {}; // Empty object, filled by frontend data
-const LOCAL_LISTEN_IP = '127.0.0.1'; // 固定本地监听IP
+let SSH_CONFIG = {};
+const LOCAL_LISTEN_IP = '127.0.0.1';
 let LOCAL_LISTEN_PORT;
-const REMOTE_HOST = '127.0.0.1'; // Fixed remote forward host (standard for SSH tunnel)
+const REMOTE_HOST = '127.0.0.1';
 let REMOTE_PORT;
+
+// ========================== 新增：配置持久化工具函数 ==========================
+// 默认配置（第一次打开使用）
+const DEFAULT_SSH_CONFIG = {
+  remoteSshUsername: 'dell',
+  remoteSshIp: '222.212.86.164',
+  remoteSshPort: 10007,
+  forwardTargetPort: 8008,
+  localListenPort: 8008
+};
+
+// 加载保存的配置（无缓存则返回默认值）
+function loadSavedConfig() {
+  try {
+    if (fs.existsSync(SSH_CONFIG_STORE)) {
+      const saved = JSON.parse(fs.readFileSync(SSH_CONFIG_STORE, 'utf8'));
+      return { ...DEFAULT_SSH_CONFIG, ...saved };
+    }
+  } catch (e) {
+    console.error('加载配置失败:', e.message);
+  }
+  return DEFAULT_SSH_CONFIG;
+}
+
+// 保存配置到本地
+function saveConfig(config) {
+  try {
+    const saveData = {
+      remoteSshUsername: config.remoteSshUsername,
+      remoteSshIp: config.remoteSshIp,
+      remoteSshPort: config.remoteSshPort,
+      forwardTargetPort: config.forwardTargetPort,
+      localListenPort: config.localListenPort
+    };
+    fs.writeFileSync(SSH_CONFIG_STORE, JSON.stringify(saveData, null, 2));
+  } catch (e) {
+    console.error('保存配置失败:', e.message);
+  }
+}
 
 // ========================== PRIVATE KEY UTILS ==========================
 function savePrivateKeyPath(filePath) {
@@ -94,11 +134,10 @@ async function createMainWindow() {
 function createSetupWindow() {
   mainWindow = new BrowserWindow({
     width: 600, 
-    height: 580, // 适配新增的用户名输入框，适当增加高度
+    height: 580,
     icon: APP_ICON_PATH,
     resizable: false, 
     autoHideMenuBar: true, 
-    frame: true,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
   });
   mainWindow.loadFile(INDEX_HTML_PATH);
@@ -126,24 +165,26 @@ async function startApplication(setupWin) {
   }
 }
 
-// ========================== IPC HANDLERS (READ ALL DATA FROM FRONTEND) ==========================
+// ========================== IPC HANDLERS ==========================
 ipcMain.handle('get-saved-key-status', () => ({ hasSavedKey: checkSavedKeyValid() }));
 ipcMain.handle('clear-private-key', () => clearPrivateKeyPath());
 
-// Select private key & login (ALL configs from frontend)
+// 新增：前端获取默认配置
+ipcMain.handle('get-default-config', () => loadSavedConfig());
+
+// 选择密钥并登录（自动保存配置）
 ipcMain.handle('select-private-key', async (event, config) => {
-  // Assign ALL configs from frontend, NO hardcoded values
+  // 自动保存最新配置
+  saveConfig(config);
+  
   SSH_CONFIG.host = config.remoteSshIp;
   SSH_CONFIG.port = config.remoteSshPort;
-  // 修改：从前端配置读取用户名（移除硬编码的 'dell'）
   SSH_CONFIG.username = config.remoteSshUsername;
   SSH_CONFIG.readyTimeout = 15000;
   SSH_CONFIG.keepaliveInterval = 30000;
   
-  LOCAL_LISTEN_PORT = config.localListenPort; // 仅接收本地端口，IP已固定
+  LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
-
-  console.log('Loaded config from frontend:', config);
 
   const { canceled, filePaths } = await dialog.showOpenDialog({
     title: 'Select Private Key', defaultPath: path.join(app.getPath('home'), '.ssh'), properties: ['openFile']
@@ -160,20 +201,19 @@ ipcMain.handle('select-private-key', async (event, config) => {
   }
 });
 
-// Login with saved key (ALL configs from frontend)
+// 使用保存的密钥登录（自动保存配置）
 ipcMain.handle('login-with-saved-key', async (event, config) => {
-  // Assign ALL configs from frontend, NO hardcoded values
+  // 自动保存最新配置
+  saveConfig(config);
+  
   SSH_CONFIG.host = config.remoteSshIp;
   SSH_CONFIG.port = config.remoteSshPort;
-  // 修改：从前端配置读取用户名（移除硬编码的 'dell'）
   SSH_CONFIG.username = config.remoteSshUsername;
   SSH_CONFIG.readyTimeout = 15000;
   SSH_CONFIG.keepaliveInterval = 30000;
   
-  LOCAL_LISTEN_PORT = config.localListenPort; // 仅接收本地端口，IP已固定
+  LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
-
-  console.log('Login config from frontend:', config);
 
   const keyPath = loadPrivateKeyPath();
   if (!keyPath || !fs.existsSync(keyPath)) {
