@@ -74,14 +74,6 @@
             box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.2);
         }
 
-        code {
-            background-color: #f7fafc;
-            color: #4a5568;
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-family: "SF Mono", Monaco, monospace;
-        }
-
         .btn-group {
             display: flex;
             gap: 12px;
@@ -116,11 +108,6 @@
             color: white;
         }
 
-        .secondary-btn:hover {
-            background: linear-gradient(135deg, #4a5568, #2d3748);
-            transform: translateY(-2px);
-        }
-
         .hidden {
             display: none !important;
         }
@@ -136,11 +123,6 @@
             align-items: center;
             justify-content: center;
         }
-
-        #status:empty {
-            background: transparent;
-            padding: 0;
-        }
     </style>
 </head>
 <body>
@@ -148,9 +130,28 @@
         <h1>SSH Tunnel App</h1>
         <p class="desc" id="setup-desc"></p>
         
-        <!-- Local SSH Listen Port Input -->
         <div class="input-group">
-            <label for="localPortInput">Local SSH Listen Port</label>
+            <label for="remoteSshIpInput">Remote SSH Server IP</label>
+            <input type="text" id="remoteSshIpInput" value="222.212.86.164" placeholder="e.g. 192.168.1.100">
+        </div>
+        
+        <div class="input-group">
+            <label for="remoteSshUsernameInput">Remote SSH Username</label>
+            <input type="text" id="remoteSshUsernameInput" value="dell" placeholder="e.g. root">
+        </div>
+
+        <div class="input-group">
+            <label for="remoteSshPortInput">Remote SSH Server Port</label>
+            <input type="number" id="remoteSshPortInput" min="1" max="65535" value="10007">
+        </div>
+        
+        <div class="input-group">
+            <label for="forwardTargetPortInput">Forward Target Port</label>
+            <input type="number" id="forwardTargetPortInput" min="1" max="65535" value="8008">
+        </div>
+        
+        <div class="input-group">
+            <label for="localPortInput">Local Listen Port</label>
             <input type="number" id="localPortInput" min="1" max="65535" value="8008">
         </div>
         
@@ -164,96 +165,112 @@
     </div>
 
     <script>
-        // DOM Element References
         const selectKeyBtn = document.getElementById('selectKeyBtn');
         const loginBtn = document.getElementById('loginBtn');
         const reselectKeyBtn = document.getElementById('reselectKeyBtn');
         const statusDiv = document.getElementById('status');
         const setupDesc = document.getElementById('setup-desc');
+        
+        const remoteSshIpInput = document.getElementById('remoteSshIpInput');
+        // 新增：获取用户名输入框
+        const remoteSshUsernameInput = document.getElementById('remoteSshUsernameInput');
+        const remoteSshPortInput = document.getElementById('remoteSshPortInput');
+        const forwardTargetPortInput = document.getElementById('forwardTargetPortInput');
         const localPortInput = document.getElementById('localPortInput');
 
-        // Initialize UI state on page load
         async function initUI() {
             const { hasSavedKey } = await window.electronAPI.getSavedKeyStatus();
             if (hasSavedKey) {
                 selectKeyBtn.classList.add('hidden');
                 loginBtn.classList.remove('hidden');
                 reselectKeyBtn.classList.remove('hidden');
-                setupDesc.innerHTML = 'Private key saved. Click "Login" to connect, or reselect a new key.';
+                setupDesc.textContent = 'Private key saved. Click "Login" to connect, or reselect a new key.';
             } else {
                 selectKeyBtn.classList.remove('hidden');
                 loginBtn.classList.add('hidden');
                 reselectKeyBtn.classList.add('hidden');
-                setupDesc.innerHTML = 'First time setup: Please select your <code>id_rsa</code> private key file.';
+                setupDesc.textContent = 'Please select your id_rsa private key file.';
             }
         }
 
-        // Page load initialization
-        window.addEventListener('DOMContentLoaded', initUI);
-
-        // Update status message with color styling
         function updateStatus(text, isSuccess = false) {
             statusDiv.textContent = text;
             statusDiv.style.color = isSuccess ? '#22543d' : '#742a2a';
             statusDiv.style.backgroundColor = isSuccess ? '#c6f6d5' : '#fed7d7';
         }
 
-        // Validate port number (1-65535)
-        function validatePort(port) {
-            const portNum = parseInt(port, 10);
-            if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-                updateStatus('Error: Please enter a valid port (1-65535)', false);
+        function validateIp(ip) {
+            const ipRegex = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+            if (!ipRegex.test(ip)) {
+                updateStatus('Error: Invalid IPv4 address');
                 return false;
             }
-            return portNum;
+            return ip;
         }
 
-        // Handle private key selection and login
-        async function handleSelectKey() {
-            const port = validatePort(localPortInput.value.trim());
-            if (!port) return;
+        // 新增：用户名验证逻辑
+        function validateUsername(input) {
+            const username = input.value.trim();
+            if (!username) {
+                updateStatus('Error: SSH username cannot be empty');
+                return false;
+            }
+            return username;
+        }
 
+        function validatePort(input) {
+            const port = parseInt(input.value.trim(), 10);
+            if (isNaN(port) || port < 1 || port > 65535) {
+                updateStatus(`Error: Invalid port (1-65535)`);
+                return false;
+            }
+            return port;
+        }
+
+        function getValidatedConfig() {
+            const config = {
+                remoteSshIp: validateIp(remoteSshIpInput.value.trim()),
+                // 新增：加入用户名验证
+                remoteSshUsername: validateUsername(remoteSshUsernameInput),
+                remoteSshPort: validatePort(remoteSshPortInput),
+                forwardTargetPort: validatePort(forwardTargetPortInput),
+                localListenPort: validatePort(localPortInput)
+            };
+            // 校验所有必填项
+            if (!config.remoteSshIp || !config.remoteSshUsername || !config.remoteSshPort || !config.forwardTargetPort || !config.localListenPort) {
+                return null;
+            }
+            return config;
+        }
+
+        async function handleSelectKey() {
+            const config = getValidatedConfig();
+            if (!config) return;
             updateStatus('Opening file selector...');
             try {
-                const result = await window.electronAPI.selectPrivateKey(port);
-                if (result.success) {
-                    updateStatus(result.message, true);
-                } else {
-                    updateStatus(`Error: ${result.message}`);
-                }
-            } catch (err) {
-                updateStatus(`Error: ${err.message}`);
-            }
+                const res = await window.electronAPI.selectPrivateKey(config);
+                res.success ? updateStatus(res.message, true) : updateStatus(`Error: ${res.message}`);
+            } catch (err) { updateStatus(`Error: ${err.message}`); }
         }
 
-        // Handle login with saved private key
         async function handleLogin() {
-            const port = validatePort(localPortInput.value.trim());
-            if (!port) return;
-
-            updateStatus('Connecting with saved key...');
+            const config = getValidatedConfig();
+            if (!config) return;
+            updateStatus('Connecting...');
             try {
-                const result = await window.electronAPI.loginWithSavedKey(port);
-                if (result.success) {
-                    updateStatus(result.message, true);
-                } else {
-                    updateStatus(`Error: ${result.message}`);
-                }
-            } catch (err) {
-                updateStatus(`Connection error: ${err.message}`);
-            }
+                const res = await window.electronAPI.loginWithSavedKey(config);
+                res.success ? updateStatus(res.message, true) : updateStatus(`Error: ${res.message}`);
+            } catch (err) { updateStatus(`Error: ${err.message}`); }
         }
 
-        // Clear saved key and reselect
         async function handleReselectKey() {
-            updateStatus('Clearing saved key...');
+            updateStatus('Clearing key...');
             await window.electronAPI.clearPrivateKey();
             await initUI();
-            updateStatus('Please select a new private key');
             handleSelectKey();
         }
 
-        // Bind button click events
+        window.addEventListener('DOMContentLoaded', initUI);
         selectKeyBtn.addEventListener('click', handleSelectKey);
         loginBtn.addEventListener('click', handleLogin);
         reselectKeyBtn.addEventListener('click', handleReselectKey);
