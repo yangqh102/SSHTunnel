@@ -16,7 +16,7 @@ const SSH_CONFIG = {
 };
 
 const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
-const PRIVATE_KEY_PATH = path.join(app.getAppPath(), './', 'assets', 'id_rsa');
+const PRIVATE_KEY_PATH = path.join('../../', 'assets', 'id_rsa');
 const INDEX_HTML_PATH = path.join('./', 'index.html'); 
 
 // ====================== 2. Global Variables ======================
