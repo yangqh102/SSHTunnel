@@ -61,11 +61,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract version from package.json
+        id: extract_version
+        run: echo "::set-output name=version::$(cat package.json | jq -r .version)"
+        shell: bash
+
       # 步骤7：上传打包产物（exe安装包）到GitHub Artifacts
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LocalOverleaf-win-${{ github.sha }} # 产物名称
+          name: LocalOverleaf-win-${{ steps.extract_version.outputs.version }} # 产物名称
           path: | # 打包产物路径（匹配electron-builder的output配置）
             dist/*.exe
             dist/win-unpacked/ # 可选：上传免安装版文件夹

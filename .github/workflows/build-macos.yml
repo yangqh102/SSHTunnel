@@ -66,10 +66,15 @@ jobs:
           ARCH: x64
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract version from package.json
+        id: extract_version
+        run: echo "::set-output name=version::$(cat package.json | jq -r .version)"
+        shell: bash
+        
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LocalOverleaf-macOS-${{ github.sha }}
+          name: LocalOverleaf-macOS-${{ steps.extract_version.outputs.version }}
           path: |
             dist/*.dmg
             dist/*.zip

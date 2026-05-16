@@ -21,7 +21,6 @@
             padding: 20px;
         }
 
-        /* 主卡片容器 */
         .container {
             background: #ffffff;
             width: 100%;
@@ -30,14 +29,8 @@
             border-radius: 18px;
             box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
             text-align: center;
-            transition: all 0.3s ease;
         }
 
-        .container:hover {
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-        }
-
-        /* 标题样式 */
         h1 {
             font-size: 26px;
             color: #2d3748;
@@ -45,7 +38,6 @@
             font-weight: 600;
         }
 
-        /* 描述文本 */
         .desc {
             font-size: 16px;
             color: #718096;
@@ -53,41 +45,57 @@
             margin-bottom: 35px;
         }
 
-        /* 代码高亮 */
         code {
             background-color: #f7fafc;
             color: #4a5568;
             padding: 3px 8px;
             border-radius: 6px;
             font-family: "SF Mono", Monaco, monospace;
-            font-size: 15px;
         }
 
-        /* 主按钮 */
-        #selectKeyBtn {
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+
+        .action-btn {
             padding: 14px 32px;
             font-size: 16px;
             font-weight: 500;
             cursor: pointer;
             border: none;
             border-radius: 10px;
-            background: linear-gradient(135deg, #4299e1, #3182ce);
-            color: white;
             transition: all 0.2s ease;
-            width: 100%;
-            max-width: 280px;
+            min-width: 180px;
         }
 
-        #selectKeyBtn:hover {
+        .primary-btn {
+            background: linear-gradient(135deg, #4299e1, #3182ce);
+            color: white;
+        }
+
+        .primary-btn:hover {
             background: linear-gradient(135deg, #3182ce, #2c5282);
             transform: translateY(-2px);
         }
 
-        #selectKeyBtn:active {
-            transform: translateY(0);
+        .secondary-btn {
+            background: linear-gradient(135deg, #718096, #4a5568);
+            color: white;
         }
 
-        /* 状态提示框 */
+        .secondary-btn:hover {
+            background: linear-gradient(135deg, #4a5568, #2d3748);
+            transform: translateY(-2px);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
         #status {
             margin-top: 24px;
             padding: 12px 16px;
@@ -98,10 +106,8 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.3s ease;
         }
 
-        /* 状态默认颜色 */
         #status:empty {
             background: transparent;
             padding: 0;
@@ -111,35 +117,98 @@
 <body>
     <div class="container">
         <h1>SSH Tunnel App</h1>
-        <p class="desc">First time setup: Please select your <code>id_rsa</code> private key file.</p>
+        <p class="desc" id="setup-desc"></p>
         
-        <button id="selectKeyBtn">Select Private Key</button>
+        <div class="btn-group">
+            <button id="selectKeyBtn" class="action-btn primary-btn">Select Private Key</button>
+            <button id="loginBtn" class="action-btn primary-btn hidden">Login with Saved Key</button>
+            <button id="reselectKeyBtn" class="action-btn secondary-btn hidden">Reselect Private Key</button>
+        </div>
+        
         <div id="status"></div>
     </div>
 
     <script>
         const selectKeyBtn = document.getElementById('selectKeyBtn');
+        const loginBtn = document.getElementById('loginBtn');
+        const reselectKeyBtn = document.getElementById('reselectKeyBtn');
         const statusDiv = document.getElementById('status');
+        const setupDesc = document.getElementById('setup-desc');
 
-        selectKeyBtn.addEventListener('click', async () => {
-            statusDiv.textContent = 'Opening file selector...';
-            statusDiv.style.color = '#4a5568';
-            statusDiv.style.backgroundColor = '#f7fafc';
-            
-            const result = await window.electronAPI.selectPrivateKey();
-            if (result.success) {
-                statusDiv.textContent = result.message;
-                statusDiv.style.color = '#22543d';
-                statusDiv.style.backgroundColor = '#c6f6d5';
-                setTimeout(() => {
-                    statusDiv.textContent = 'Setup successful, window closing...';
-                }, 1000);
+        // 初始化：刷新UI状态（根据是否有密钥显示按钮）
+        async function initUI() {
+            const { hasSavedKey } = await window.electronAPI.getSavedKeyStatus();
+            if (hasSavedKey) {
+                selectKeyBtn.classList.add('hidden');
+                loginBtn.classList.remove('hidden');
+                reselectKeyBtn.classList.remove('hidden');
+                setupDesc.innerHTML = 'Private key saved. Click "Login" to connect, or reselect a new key.';
             } else {
-                statusDiv.textContent = result.message;
-                statusDiv.style.color = '#742a2a';
-                statusDiv.style.backgroundColor = '#fed7d7';
+                selectKeyBtn.classList.remove('hidden');
+                loginBtn.classList.add('hidden');
+                reselectKeyBtn.classList.add('hidden');
+                setupDesc.innerHTML = 'First time setup: Please select your <code>id_rsa</code> private key file.';
             }
-        });
+        }
+
+        // 页面加载初始化
+        window.addEventListener('DOMContentLoaded', initUI);
+
+        // 统一状态提示
+        function updateStatus(text, isSuccess = false) {
+            statusDiv.textContent = text;
+            statusDiv.style.color = isSuccess ? '#22543d' : '#742a2a';
+            statusDiv.style.backgroundColor = isSuccess ? '#c6f6d5' : '#fed7d7';
+        }
+
+        // 1. 选择密钥逻辑
+        async function handleSelectKey() {
+            updateStatus('Opening file selector...');
+            try {
+                const result = await window.electronAPI.selectPrivateKey();
+                if (result.success) {
+                    updateStatus(result.message, true);
+                } else {
+                    // 失败：显示错误，不关闭窗口
+                    updateStatus(`Login failed: ${result.message}`);
+                }
+            } catch (err) {
+                updateStatus(`Error: ${err.message}`);
+            }
+        }
+
+        // 2. 登录逻辑（使用保存的密钥）
+        async function handleLogin() {
+            updateStatus('Connecting with saved key...');
+            try {
+                const result = await window.electronAPI.loginWithSavedKey();
+                if (result.success) {
+                    updateStatus(result.message, true);
+                } else {
+                    // 失败：显示错误，保留窗口
+                    updateStatus(`Login failed: ${result.message}`);
+                }
+            } catch (err) {
+                updateStatus(`Connection error: ${err.message}`);
+            }
+        }
+
+        // 3. 重新选择密钥（核心修改：清除已保存的路径）
+        async function handleReselectKey() {
+            updateStatus('Clearing saved key...');
+            // 第一步：清除主进程保存的密钥配置
+            await window.electronAPI.clearPrivateKey();
+            // 第二步：重置UI为「首次选择」状态
+            await initUI();
+            updateStatus('Please select a new private key');
+            // 第三步：打开文件选择器
+            handleSelectKey();
+        }
+
+        // 绑定按钮事件
+        selectKeyBtn.addEventListener('click', handleSelectKey);
+        loginBtn.addEventListener('click', handleLogin);
+        reselectKeyBtn.addEventListener('click', handleReselectKey);
     </script>
 </body>
 </html>

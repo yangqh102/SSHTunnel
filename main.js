@@ -1,205 +1,153 @@
-const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const net = require('net');
 const { Client } = require('ssh2');
 const path = require('path');
 const fs = require('fs');
 
-// ====================== 1. Configuration ======================
+// ====================== 配置 ======================
 const SSH_CONFIG = {
   host: '222.212.86.164',
   port: 10007,
   username: 'dell',
-  privateKey: null, 
+  privateKey: null,
   readyTimeout: 5000,
   keepaliveInterval: 30000,
-  keepaliveCountMax: 3,
 };
 
-const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
-const PRIVATE_KEY_PATH = path.join('../../', 'assets', 'id_rsa');
-const INDEX_HTML_PATH = path.join('./', 'index.html'); 
+const INDEX_HTML_PATH = path.join(__dirname, 'index.html');
+const CONFIG_FILE = path.join(app.getPath('userData'), 'private-key-config.json');
 
-// ====================== 2. Global Variables ======================
+// ====================== 全局变量 ======================
 let sshClient = null;
 let localServer = null;
-let mainWindow = null; // This variable will point to whichever window is currently active
+let mainWindow = null;
 const LOCAL_PORT = 80;
 const REMOTE_HOST = '127.0.0.1';
 const REMOTE_PORT = 8008;
 
-// ====================== 3. SSH Tunnel Setup ======================
+// ====================== 配置工具函数 ======================
+// 保存密钥路径
+function savePrivateKeyPath(filePath) {
+  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ privateKeyPath: filePath }, null, 2)); }
+  catch (e) { console.error('保存密钥失败', e); }
+}
+
+// 加载密钥路径
+function loadPrivateKeyPath() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE)).privateKeyPath || null;
+  } catch (e) {}
+  return null;
+}
+
+// 检查密钥有效性
+function checkSavedKeyValid() {
+  const p = loadPrivateKeyPath();
+  return !!p && fs.existsSync(p);
+}
+
+// 【核心】清除密钥配置文件（所有失败场景调用）
+function clearPrivateKeyPath() {
+  try { if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE); }
+  catch (e) { console.error('清除配置失败', e); }
+}
+
+// ====================== SSH 隧道 ======================
 function setupSSHTunneling() {
   return new Promise((resolve, reject) => {
     sshClient = new Client();
     sshClient
       .on('ready', () => {
-        console.log('SSH connection successful, starting port forwarding...');
-        localServer = net.createServer((localSocket) => {
-          sshClient.forwardOut('localhost', LOCAL_PORT, REMOTE_HOST, REMOTE_PORT, (err, sshStream) => {
-            if (err) {
-              console.error('Port forwarding failed:', err.message);
-              localSocket.end();
-              return;
-            }
-            localSocket.pipe(sshStream).pipe(localSocket);
-            sshStream.on('error', (err) => { console.error('SSH stream error:', err.message); localSocket.end(); });
-            localSocket.on('error', (err) => { console.error('Local socket error:', err.message); sshStream.end(); });
+        localServer = net.createServer((sock) => {
+          sshClient.forwardOut('localhost', LOCAL_PORT, REMOTE_HOST, REMOTE_PORT, (err, stream) => {
+            if (err) { sock.destroy(); return; }
+            sock.pipe(stream).pipe(sock);
           });
-        }).listen(LOCAL_PORT, 'localhost', () => {
-          console.log(`Local port forwarding successful: localhost:${LOCAL_PORT} -> ${SSH_CONFIG.host}:${REMOTE_PORT}`);
-          resolve();
-        });
-        localServer.on('error', (err) => { reject(`Failed to listen on local port ${LOCAL_PORT}: ${err.message}`); });
+        }).listen(LOCAL_PORT, 'localhost', () => resolve());
       })
-      .on('error', (err) => { reject(`SSH connection failed: ${err.message}`); })
-      .on('end', () => { console.log('SSH connection disconnected'); })
+      .on('error', (e) => reject(e.message))
       .connect(SSH_CONFIG);
   });
 }
 
-// ====================== 4. Create Main Application Window ======================
+// ====================== 窗口创建 ======================
 async function createMainWindow() {
-  Menu.setApplicationMenu(null);
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    icon: APP_ICON_PATH,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
-  });
-
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    mainWindow.loadURL(details.url);
-    return { action: 'deny' };
-  });
-
+  mainWindow = new BrowserWindow({ width: 1200, height: 800, autoHideMenuBar: true });
   await mainWindow.loadURL(`http://localhost:${LOCAL_PORT}`);
-  // mainWindow.webContents.openDevTools();
-
-  // Clean up resources when this specific window is closed
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => mainWindow = null);
 }
 
-// ====================== 5. Create Setup Window (Wizard) ======================
 function createSetupWindow() {
-  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 600,
-    height: 400,
-    icon: APP_ICON_PATH,
-    resizable: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-      preload: path.join(__dirname, 'preload.js') 
-    }
+    width: 600, height: 450, resizable: false,
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
   });
-
-  mainWindow.loadFile(INDEX_HTML_PATH); 
-  // mainWindow.webContents.openDevTools();
-
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.loadFile(INDEX_HTML_PATH);
+  mainWindow.on('closed', () => mainWindow = null);
 }
 
-// ====================== 6. IPC Handler (FIXED LOGIC) ======================
-const { ipcMain } = require('electron');
-ipcMain.handle('select-private-key', async () => {
-  // 1. Open File Dialog
-  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select SSH Private Key (id_rsa)',
-    defaultPath: path.join(app.getPath('home'), '.ssh'),
-    properties: ['openFile'],
-    filters: [{ name: 'Private Key Files', extensions: ['*'] }, { name: 'All Files', extensions: ['*'] }]
-  });
-
-  if (canceled || filePaths.length === 0) {
-    return { success: false, message: 'Selection cancelled by user.' };
-  }
-
-  const selectedFilePath = filePaths[0];
-  const assetsDir = path.join(__dirname, 'assets');
-  if (!fs.existsSync(assetsDir)) {
-    fs.mkdirSync(assetsDir, { recursive: true });
-  }
-
-  try {
-    // 2. Copy File
-    fs.copyFileSync(selectedFilePath, PRIVATE_KEY_PATH);
-    console.log(`File successfully copied to: ${PRIVATE_KEY_PATH}`);
-    
-    // 3. Update SSH Config
-    SSH_CONFIG.privateKey = fs.readFileSync(PRIVATE_KEY_PATH);
-    
-    // --- CRITICAL FIX START ---
-    
-    // 4. Save reference to the CURRENT window (the Setup Window)
-    // We need this because createMainWindow() will overwrite the global 'mainWindow' variable
-    const setupWindowRef = mainWindow;
-
-    // 5. Start the Main Application Logic (SSH + Remote Page)
-    // This runs BEFORE we close the setup window to ensure the app doesn't quit
-    try {
-        await setupSSHTunneling();
-        await createMainWindow(); // This creates the new window and updates global 'mainWindow'
-        console.log('Main application started successfully.');
-    } catch (err) {
-        console.error('Error starting main app:', err);
-        return { success: false, message: `Failed to start app: ${err.message}` };
-    }
-
-    // 6. Close the OLD Setup Window explicitly
-    if (setupWindowRef && !setupWindowRef.isDestroyed()) {
-        setupWindowRef.close();
-    }
-    // --- CRITICAL FIX END ---
-    
-    return { success: true, message: 'Private key updated. Starting application...' };
-    
-  } catch (err) {
-    console.error('Error copying file:', err);
-    return { success: false, message: `File copy failed: ${err.message}` };
-  }
-});
-
-// ====================== 7. Core Startup Logic ======================
-async function startMainApplication() {
+// 启动应用（失败自动清除配置）
+async function startApplication(setupWin) {
   try {
     await setupSSHTunneling();
     await createMainWindow();
+    if (setupWin && !setupWin.isDestroyed()) setupWin.close();
+    return { success: true, message: 'Login successful!' };
   } catch (err) {
-    console.error('Main application startup failed:', err);
-    app.quit();
+    // 【核心】SSH登录失败 → 自动清除无效密钥配置
+    clearPrivateKeyPath();
+    return { success: false, message: `SSH连接失败: ${err}` };
   }
 }
 
-app.whenReady().then(async () => {
-  if (fs.existsSync(PRIVATE_KEY_PATH)) {
-    // Case 1: File exists
-    try {
-      SSH_CONFIG.privateKey = fs.readFileSync(PRIVATE_KEY_PATH);
-      console.log('Private key detected, starting directly...');
-      await startMainApplication();
-    } catch (err) {
-      console.error('Failed to read private key file:', err);
-      createSetupWindow();
-    }
-  } else {
-    // Case 2: File does not exist
-    console.log('No private key detected, opening setup wizard...');
-    createSetupWindow();
-  }
+// ====================== IPC 通信 ======================
+ipcMain.handle('get-saved-key-status', () => ({ hasSavedKey: checkSavedKeyValid() }));
+ipcMain.handle('clear-private-key', () => clearPrivateKeyPath());
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createSetupWindow();
-    }
+// 选择私钥
+ipcMain.handle('select-private-key', async (e) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select id_rsa', defaultPath: path.join(app.getPath('home'), '.ssh'), properties: ['openFile']
   });
+  if (canceled) return { success: false, message: '取消选择' };
+
+  const keyPath = filePaths[0];
+  try {
+    // 尝试读取密钥文件
+    SSH_CONFIG.privateKey = fs.readFileSync(keyPath);
+    savePrivateKeyPath(keyPath);
+    // 启动应用，失败会自动清除配置
+    return await startApplication(e.sender.getOwnerBrowserWindow());
+  } catch (e) {
+    // 【核心】密钥文件无效 → 自动清除配置
+    clearPrivateKeyPath();
+    return { success: false, message: '无效的密钥文件' };
+  }
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    if (sshClient) sshClient.end();
-    if (localServer) localServer.close();
-    app.quit();
+// 使用保存的密钥登录
+ipcMain.handle('login-with-saved-key', async (e) => {
+  const keyPath = loadPrivateKeyPath();
+  if (!keyPath || !fs.existsSync(keyPath)) {
+    clearPrivateKeyPath();
+    return { success: false, message: '未找到有效密钥' };
   }
+
+  try {
+    SSH_CONFIG.privateKey = fs.readFileSync(keyPath);
+    return await startApplication(e.sender.getOwnerBrowserWindow());
+  } catch (e) {
+    // 【核心】密钥损坏 → 自动清除配置
+    clearPrivateKeyPath();
+    return { success: false, message: '密钥文件已损坏' };
+  }
+});
+
+// ====================== 应用启动 ======================
+app.whenReady().then(createSetupWindow);
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+  if (sshClient) sshClient.end();
+  if (localServer) localServer.close();
 });
