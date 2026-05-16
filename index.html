@@ -42,7 +42,36 @@
             font-size: 16px;
             color: #718096;
             line-height: 1.6;
-            margin-bottom: 35px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            margin-bottom: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .input-group label {
+            font-size: 15px;
+            color: #2d3748;
+            font-weight: 500;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            color: #2d3748;
+            outline: none;
+        }
+
+        .input-group input:focus {
+            border-color: #4299e1;
+            box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.2);
         }
 
         code {
@@ -119,6 +148,12 @@
         <h1>SSH Tunnel App</h1>
         <p class="desc" id="setup-desc"></p>
         
+        <!-- Local SSH Listen Port Input -->
+        <div class="input-group">
+            <label for="localPortInput">Local SSH Listen Port</label>
+            <input type="number" id="localPortInput" min="1" max="65535" value="8008">
+        </div>
+        
         <div class="btn-group">
             <button id="selectKeyBtn" class="action-btn primary-btn">Select Private Key</button>
             <button id="loginBtn" class="action-btn primary-btn hidden">Login with Saved Key</button>
@@ -129,13 +164,15 @@
     </div>
 
     <script>
+        // DOM Element References
         const selectKeyBtn = document.getElementById('selectKeyBtn');
         const loginBtn = document.getElementById('loginBtn');
         const reselectKeyBtn = document.getElementById('reselectKeyBtn');
         const statusDiv = document.getElementById('status');
         const setupDesc = document.getElementById('setup-desc');
+        const localPortInput = document.getElementById('localPortInput');
 
-        // 初始化：刷新UI状态（根据是否有密钥显示按钮）
+        // Initialize UI state on page load
         async function initUI() {
             const { hasSavedKey } = await window.electronAPI.getSavedKeyStatus();
             if (hasSavedKey) {
@@ -151,61 +188,72 @@
             }
         }
 
-        // 页面加载初始化
+        // Page load initialization
         window.addEventListener('DOMContentLoaded', initUI);
 
-        // 统一状态提示
+        // Update status message with color styling
         function updateStatus(text, isSuccess = false) {
             statusDiv.textContent = text;
             statusDiv.style.color = isSuccess ? '#22543d' : '#742a2a';
             statusDiv.style.backgroundColor = isSuccess ? '#c6f6d5' : '#fed7d7';
         }
 
-        // 1. 选择密钥逻辑
+        // Validate port number (1-65535)
+        function validatePort(port) {
+            const portNum = parseInt(port, 10);
+            if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+                updateStatus('Error: Please enter a valid port (1-65535)', false);
+                return false;
+            }
+            return portNum;
+        }
+
+        // Handle private key selection and login
         async function handleSelectKey() {
+            const port = validatePort(localPortInput.value.trim());
+            if (!port) return;
+
             updateStatus('Opening file selector...');
             try {
-                const result = await window.electronAPI.selectPrivateKey();
+                const result = await window.electronAPI.selectPrivateKey(port);
                 if (result.success) {
                     updateStatus(result.message, true);
                 } else {
-                    // 失败：显示错误，不关闭窗口
-                    updateStatus(`Login failed: ${result.message}`);
+                    updateStatus(`Error: ${result.message}`);
                 }
             } catch (err) {
                 updateStatus(`Error: ${err.message}`);
             }
         }
 
-        // 2. 登录逻辑（使用保存的密钥）
+        // Handle login with saved private key
         async function handleLogin() {
+            const port = validatePort(localPortInput.value.trim());
+            if (!port) return;
+
             updateStatus('Connecting with saved key...');
             try {
-                const result = await window.electronAPI.loginWithSavedKey();
+                const result = await window.electronAPI.loginWithSavedKey(port);
                 if (result.success) {
                     updateStatus(result.message, true);
                 } else {
-                    // 失败：显示错误，保留窗口
-                    updateStatus(`Login failed: ${result.message}`);
+                    updateStatus(`Error: ${result.message}`);
                 }
             } catch (err) {
                 updateStatus(`Connection error: ${err.message}`);
             }
         }
 
-        // 3. 重新选择密钥（核心修改：清除已保存的路径）
+        // Clear saved key and reselect
         async function handleReselectKey() {
             updateStatus('Clearing saved key...');
-            // 第一步：清除主进程保存的密钥配置
             await window.electronAPI.clearPrivateKey();
-            // 第二步：重置UI为「首次选择」状态
             await initUI();
             updateStatus('Please select a new private key');
-            // 第三步：打开文件选择器
             handleSelectKey();
         }
 
-        // 绑定按钮事件
+        // Bind button click events
         selectKeyBtn.addEventListener('click', handleSelectKey);
         loginBtn.addEventListener('click', handleLogin);
         reselectKeyBtn.addEventListener('click', handleReselectKey);

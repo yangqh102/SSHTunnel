@@ -1,10 +1,10 @@
-// preload.js
+// Preload script: Expose safe IPC APIs to renderer process
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Expose Electron API to window global object
 contextBridge.exposeInMainWorld('electronAPI', {
   getSavedKeyStatus: () => ipcRenderer.invoke('get-saved-key-status'),
-  selectPrivateKey: () => ipcRenderer.invoke('select-private-key'),
-  loginWithSavedKey: () => ipcRenderer.invoke('login-with-saved-key'),
-  // 新增：清除已保存的私钥配置
+  selectPrivateKey: (localPort) => ipcRenderer.invoke('select-private-key', localPort),
+  loginWithSavedKey: (localPort) => ipcRenderer.invoke('login-with-saved-key', localPort),
   clearPrivateKey: () => ipcRenderer.invoke('clear-private-key')
 });
