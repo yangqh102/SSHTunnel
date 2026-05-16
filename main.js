@@ -124,7 +124,7 @@ ipcMain.handle('select-private-key', async () => {
 
   try {
     // 2. Copy File
-    fs.copyFileSync(selectedFilePath, PRIVATE_KEY_PATH);
+    fs.copyFileSync(selectedFilePath, path.join(__dirname, PRIVATE_KEY_PATH));
     console.log(`File successfully copied to: ${PRIVATE_KEY_PATH}`);
     
     // 3. Update SSH Config
