@@ -5,16 +5,17 @@ const path = require('path');
 const fs = require('fs');
 
 // ========================== FILE PATHS ==========================
-const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
+const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.ico');
 const INDEX_HTML_PATH = path.join(__dirname, 'index.html');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'private-key-config.json');
-// 新增：SSH配置缓存文件（持久化保存用户名/IP/端口）
 const SSH_CONFIG_STORE = path.join(app.getPath('userData'), 'ssh-config.json');
+const NAMED_CONFIGS_STORE = path.join(app.getPath('userData'), 'named-ssh-configs.json');
 
 // ========================== GLOBAL VARIABLES ==========================
 let sshClient = null;
 let localServer = null;
-let mainWindow = null;
+let setupWindow = null;   // Configuration window
+let targetWindow = null;  // Target URL window
 
 let SSH_CONFIG = {};
 const LOCAL_LISTEN_IP = '127.0.0.1';
@@ -22,17 +23,61 @@ let LOCAL_LISTEN_PORT;
 const REMOTE_HOST = '127.0.0.1';
 let REMOTE_PORT;
 
-// ========================== 新增：配置持久化工具函数 ==========================
-// 默认配置（第一次打开使用）
+// ========================== CONFIGURATION MANAGEMENT ==========================
+function loadAllNamedConfigs() {
+    try {
+        if (fs.existsSync(NAMED_CONFIGS_STORE)) {
+            return JSON.parse(fs.readFileSync(NAMED_CONFIGS_STORE, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Failed to load configurations:', e.message);
+    }
+    return {};
+}
+
+function saveNamedConfig(configName, config) {
+    try {
+        const allConfigs = loadAllNamedConfigs();
+        allConfigs[configName] = config;
+        fs.writeFileSync(NAMED_CONFIGS_STORE, JSON.stringify(allConfigs, null, 2));
+    } catch (e) {
+        console.error('Failed to save configuration:', e.message);
+        throw new Error('Failed to save config: ' + e.message);
+    }
+}
+
+function getConfigList() {
+    const allConfigs = loadAllNamedConfigs();
+    return Object.keys(allConfigs).map(name => ({ name }));
+}
+
+function loadNamedConfig(configName) {
+    const allConfigs = loadAllNamedConfigs();
+    if (!allConfigs[configName]) throw new Error('Config not found');
+    return allConfigs[configName];
+}
+
+function deleteNamedConfig(configName) {
+    try {
+        const allConfigs = loadAllNamedConfigs();
+        if (!allConfigs[configName]) throw new Error('Config not found');
+        delete allConfigs[configName];
+        fs.writeFileSync(NAMED_CONFIGS_STORE, JSON.stringify(allConfigs, null, 2));
+    } catch (e) {
+        throw new Error('Failed to delete config: ' + e.message);
+    }
+}
+
+// ========================== DEFAULT CONFIG & PERSISTENCE ==========================
 const DEFAULT_SSH_CONFIG = {
   remoteSshUsername: 'dell',
   remoteSshIp: '222.212.86.164',
   remoteSshPort: 10007,
   forwardTargetPort: 8008,
-  localListenPort: 8008
+  localListenPort: 8008,
+  targetUrl: 'http://127.0.0.1:8008'
 };
 
-// 加载保存的配置（无缓存则返回默认值）
 function loadSavedConfig() {
   try {
     if (fs.existsSync(SSH_CONFIG_STORE)) {
@@ -40,12 +85,11 @@ function loadSavedConfig() {
       return { ...DEFAULT_SSH_CONFIG, ...saved };
     }
   } catch (e) {
-    console.error('加载配置失败:', e.message);
+    console.error('Failed to load config:', e.message);
   }
   return DEFAULT_SSH_CONFIG;
 }
 
-// 保存配置到本地
 function saveConfig(config) {
   try {
     const saveData = {
@@ -53,23 +97,32 @@ function saveConfig(config) {
       remoteSshIp: config.remoteSshIp,
       remoteSshPort: config.remoteSshPort,
       forwardTargetPort: config.forwardTargetPort,
-      localListenPort: config.localListenPort
+      localListenPort: config.localListenPort,
+      targetUrl: config.targetUrl
     };
     fs.writeFileSync(SSH_CONFIG_STORE, JSON.stringify(saveData, null, 2));
   } catch (e) {
-    console.error('保存配置失败:', e.message);
+    console.error('Failed to save config:', e.message);
   }
 }
 
-// ========================== PRIVATE KEY UTILS ==========================
+// ========================== PRIVATE KEY MANAGEMENT ==========================
 function savePrivateKeyPath(filePath) {
-  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ privateKeyPath: filePath }, null, 2)); }
-  catch (e) { console.error('Failed to save private key:', e.message); }
+  try { 
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ privateKeyPath: filePath }, null, 2)); 
+  }
+  catch (e) { 
+    console.error('Failed to save private key:', e.message); 
+  }
 }
 
 function loadPrivateKeyPath() {
-  try { return fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE)).privateKeyPath || null : null; }
-  catch (e) { return null; }
+  try { 
+    return fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE)).privateKeyPath || null : null; 
+  }
+  catch (e) { 
+    return null; 
+  }
 }
 
 function checkSavedKeyValid() {
@@ -78,11 +131,15 @@ function checkSavedKeyValid() {
 }
 
 function clearPrivateKeyPath() {
-  try { if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE); }
-  catch (e) { console.error('Failed to clear config:', e.message); }
+  try { 
+    if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE); 
+  }
+  catch (e) { 
+    console.error('Failed to clear key:', e.message); 
+  }
 }
 
-// ========================== PORT OCCUPANCY CHECK ==========================
+// ========================== PORT AVAILABILITY CHECK ==========================
 function checkPortInUse(port, ip) {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -92,97 +149,109 @@ function checkPortInUse(port, ip) {
   });
 }
 
+// ========================== RESOURCE CLEANUP ==========================
+function cleanupResources() {
+  if (sshClient) { sshClient.end(); sshClient = null; }
+  if (localServer) { localServer.close(); localServer = null; }
+}
+
+function closeTargetWindow() {
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    targetWindow.destroy();
+    targetWindow = null;
+  }
+}
+
 // ========================== SSH TUNNEL SETUP ==========================
 function setupSSHTunneling() {
   return new Promise((resolve, reject) => {
+    cleanupResources();
     sshClient = new Client();
+    
     sshClient
       .on('ready', () => {
-        console.log('SSH client connected successfully');
         localServer = net.createServer((sock) => {
           sshClient.forwardOut('127.0.0.1', 0, REMOTE_HOST, REMOTE_PORT, (err, stream) => {
-            if (err) { console.error('Forward failed:', err.message); sock.destroy(); return; }
+            if (err) { sock.destroy(); return; }
             sock.pipe(stream).pipe(sock);
           });
         });
 
         localServer.listen(LOCAL_LISTEN_PORT, LOCAL_LISTEN_IP, () => {
-          console.log(`Local server listening on ${LOCAL_LISTEN_IP}:${LOCAL_LISTEN_PORT}`);
           resolve();
         });
-
-        localServer.on('error', (err) => reject(`Local server error: ${err.message}`));
       })
-      .on('error', (err) => reject(`SSH connection failed: ${err.message}`))
-      .on('end', () => console.log('SSH connection closed'))
+      .on('error', (err) => {
+        cleanupResources();
+        reject(`SSH connection failed: ${err.message}`);
+      })
       .connect(SSH_CONFIG);
   });
 }
 
 // ========================== WINDOW MANAGEMENT ==========================
-async function createMainWindow() {
-  mainWindow = new BrowserWindow({ 
-    width: 1200, 
-    height: 800, 
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true 
+async function createTargetWindow(targetUrl) {
+  targetWindow = new BrowserWindow({
+    width: 1200, height: 800, icon: APP_ICON_PATH, autoHideMenuBar: true
   });
-  await mainWindow.loadURL(`http://${LOCAL_LISTEN_IP}:${LOCAL_LISTEN_PORT}`);
-  mainWindow.on('closed', () => mainWindow = null);
+
+  targetWindow.webContents.on('did-fail-load', () => {
+    closeTargetWindow();
+  });
+
+  targetWindow.on('closed', () => { targetWindow = null; });
+  await targetWindow.loadURL(targetUrl);
 }
 
 function createSetupWindow() {
-  mainWindow = new BrowserWindow({
-    width: 600, 
-    height: 580,
-    icon: APP_ICON_PATH,
-    resizable: false, 
-    autoHideMenuBar: true, 
+  setupWindow = new BrowserWindow({
+    width: 650, height: 700, icon: APP_ICON_PATH, resizable: false, autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
   });
-  mainWindow.loadFile(INDEX_HTML_PATH);
-  mainWindow.on('closed', () => mainWindow = null);
+  setupWindow.loadFile(INDEX_HTML_PATH);
+  setupWindow.on('closed', () => { setupWindow = null; });
 }
 
-// ========================== APP START ==========================
-async function startApplication(setupWin) {
+// ========================== CORE LOGIN LOGIC ==========================
+async function startApplication(targetUrl) {
   try {
+    // Port check
     const occupied = await checkPortInUse(LOCAL_LISTEN_PORT, LOCAL_LISTEN_IP);
     if (occupied) {
-      const msg = `Port ${LOCAL_LISTEN_PORT} on ${LOCAL_LISTEN_IP} is in use`;
-      console.error(msg);
-      return { success: false, message: msg };
+      return { success: false, message: `Port ${LOCAL_LISTEN_PORT} is in use` };
     }
 
+    // Create SSH tunnel
     await setupSSHTunneling();
-    await createMainWindow();
-    if (setupWin && !setupWin.isDestroyed()) setupWin.close();
+    // Open target URL window
+    await createTargetWindow(targetUrl);
+
+    // ✅ KEY FIX: Login SUCCESS → CLOSE setup window ONLY
+    if (setupWindow && !setupWindow.isDestroyed()) {
+      setupWindow.close();
+    }
+
     return { success: true, message: 'SSH tunnel established successfully' };
   } catch (err) {
-    clearPrivateKeyPath();
     console.error('Startup failed:', err);
-    return { success: false, message: err };
+    cleanupResources();
+    closeTargetWindow(); // ❌ Login FAILED → CLOSE URL window ONLY
+    return { success: false, message: err.toString() };
   }
 }
 
 // ========================== IPC HANDLERS ==========================
 ipcMain.handle('get-saved-key-status', () => ({ hasSavedKey: checkSavedKeyValid() }));
 ipcMain.handle('clear-private-key', () => clearPrivateKeyPath());
-
-// 新增：前端获取默认配置
 ipcMain.handle('get-default-config', () => loadSavedConfig());
+ipcMain.handle('get-config-list', () => getConfigList());
+ipcMain.handle('save-named-config', (e, n, c) => saveNamedConfig(n, c));
+ipcMain.handle('load-named-config', (e, n) => loadNamedConfig(n));
+ipcMain.handle('delete-named-config', (e, n) => deleteNamedConfig(n));
 
-// 选择密钥并登录（自动保存配置）
 ipcMain.handle('select-private-key', async (event, config) => {
-  // 自动保存最新配置
   saveConfig(config);
-  
-  SSH_CONFIG.host = config.remoteSshIp;
-  SSH_CONFIG.port = config.remoteSshPort;
-  SSH_CONFIG.username = config.remoteSshUsername;
-  SSH_CONFIG.readyTimeout = 15000;
-  SSH_CONFIG.keepaliveInterval = 30000;
-  
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000 };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
@@ -192,26 +261,17 @@ ipcMain.handle('select-private-key', async (event, config) => {
   if (canceled) return { success: false, message: 'Selection canceled' };
 
   try {
-    SSH_CONFIG.privateKey = fs.readFileSync(filePaths[0]);
     savePrivateKeyPath(filePaths[0]);
-    return await startApplication(event.sender.getOwnerBrowserWindow());
+    return { success: true, message: 'Private key saved successfully' };
   } catch (e) {
     clearPrivateKeyPath();
     return { success: false, message: 'Invalid private key file' };
   }
 });
 
-// 使用保存的密钥登录（自动保存配置）
 ipcMain.handle('login-with-saved-key', async (event, config) => {
-  // 自动保存最新配置
   saveConfig(config);
-  
-  SSH_CONFIG.host = config.remoteSshIp;
-  SSH_CONFIG.port = config.remoteSshPort;
-  SSH_CONFIG.username = config.remoteSshUsername;
-  SSH_CONFIG.readyTimeout = 15000;
-  SSH_CONFIG.keepaliveInterval = 30000;
-  
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000 };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
@@ -223,9 +283,11 @@ ipcMain.handle('login-with-saved-key', async (event, config) => {
 
   try {
     SSH_CONFIG.privateKey = fs.readFileSync(keyPath);
-    return await startApplication(event.sender.getOwnerBrowserWindow());
+    return await startApplication(config.targetUrl);
   } catch (e) {
     clearPrivateKeyPath();
+    cleanupResources();
+    closeTargetWindow();
     return { success: false, message: 'Private key corrupted' };
   }
 });
@@ -234,8 +296,10 @@ ipcMain.handle('login-with-saved-key', async (event, config) => {
 app.whenReady().then(createSetupWindow);
 
 app.on('window-all-closed', () => {
+  cleanupResources();
   if (process.platform !== 'darwin') app.quit();
-  if (sshClient) sshClient.end();
-  if (localServer) localServer.close();
-  console.log('Application closed, resources cleaned up');
+});
+
+app.on('activate', () => {
+  if (!setupWindow) createSetupWindow();
 });
