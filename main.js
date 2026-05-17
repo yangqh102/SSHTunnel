@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 // ========================== FILE PATHS ==========================
-const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.ico');
+const APP_ICON_PATH = path.join('./', 'assets', 'app-icon.png');
 const INDEX_HTML_PATH = path.join(__dirname, 'index.html');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'private-key-config.json');
 const SSH_CONFIG_STORE = path.join(app.getPath('userData'), 'ssh-config.json');
