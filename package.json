@@ -1,5 +1,5 @@
 {
-  "name": "SSHTunnel",
+  "name": "sshtunnel",
   "version": "2.0.1",
   "main": "main.js",
   "scripts": {
@@ -9,8 +9,8 @@
     "build:all": "electron-builder --win --mac --linux"
   },
   "build": {
-    "appId": "com.SSHTunnel.app",
-    "productName": "SSHTunnel",
+    "appId": "com.sshtunnel.app",
+    "productName": "sshtunnel",
     "directories": {
       "output": "dist"
     },
