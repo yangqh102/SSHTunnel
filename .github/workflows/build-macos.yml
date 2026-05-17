@@ -79,4 +79,4 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.dmg.blockmap
-          retention-days: 15
+          retention-days: 1

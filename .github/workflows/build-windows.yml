@@ -74,4 +74,4 @@ jobs:
           path: | # 打包产物路径（匹配electron-builder的output配置）
             dist/*.exe
             dist/win-unpacked/ # 可选：上传免安装版文件夹
-          retention-days: 30 # 产物保留30天
+          retention-days: 1 # 产物保留30天
