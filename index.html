@@ -387,6 +387,7 @@
         // Load saved configuration list to dropdown
         async function loadConfigList() {
             const configList = await window.electronAPI.getConfigList();
+            const lastSelection = await window.electronAPI.getAppState();
             configSelect.innerHTML = '<option value="">Select saved configuration</option>';
             configList.forEach(config => {
                 const option = document.createElement('option');
@@ -394,6 +395,11 @@
                 option.textContent = config.name;
                 configSelect.appendChild(option);
             });
+            // Restore last selection if it still exists in the list
+            if (lastSelection.lastConfigName) {
+                const option = configSelect.querySelector(`option[value="${lastSelection.lastConfigName}"]`);
+                if (option) configSelect.value = lastSelection.lastConfigName;
+            }
         }
 
         // Update status message for user
@@ -487,6 +493,8 @@
         // Load selected configuration
         async function handleConfigSelect() {
             const configName = configSelect.value;
+            // Persist the selection so it survives app restart
+            await window.electronAPI.saveAppState({ lastConfigName: configName });
             if (!configName) return;
             
             try {

@@ -13,5 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfigList: () => ipcRenderer.invoke('get-config-list'),
   saveNamedConfig: (configName, config) => ipcRenderer.invoke('save-named-config', configName, config),
   loadNamedConfig: (configName) => ipcRenderer.invoke('load-named-config', configName),
-  deleteNamedConfig: (configName) => ipcRenderer.invoke('delete-named-config', configName)
+  deleteNamedConfig: (configName) => ipcRenderer.invoke('delete-named-config', configName),
+
+  // App State
+  saveAppState: (state) => ipcRenderer.invoke('save-app-state', state),
+  getAppState: () => ipcRenderer.invoke('get-app-state')
 })

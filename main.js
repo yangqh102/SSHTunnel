@@ -10,6 +10,7 @@ const INDEX_HTML_PATH = path.join(__dirname, 'index.html');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'private-key-config.json');
 const SSH_CONFIG_STORE = path.join(app.getPath('userData'), 'ssh-config.json');
 const NAMED_CONFIGS_STORE = path.join(app.getPath('userData'), 'named-ssh-configs.json');
+const APP_STATE_STORE = path.join(app.getPath('userData'), 'app-state.json');
 
 // ========================== GLOBAL VARIABLES ==========================
 let sshClient = null;
@@ -77,6 +78,28 @@ function deleteNamedConfig(configName) {
         fs.writeFileSync(NAMED_CONFIGS_STORE, JSON.stringify(allConfigs, null, 2));
     } catch (e) {
         throw new Error('Failed to delete config: ' + e.message);
+    }
+}
+
+// ========================== APP STATE (last selected config) ==========================
+function loadAppState() {
+    try {
+        if (fs.existsSync(APP_STATE_STORE)) {
+            return JSON.parse(fs.readFileSync(APP_STATE_STORE, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Failed to load app state:', e.message);
+    }
+    return {};
+}
+
+function saveAppState(state) {
+    try {
+        const existing = loadAppState();
+        const merged = { ...existing, ...state };
+        fs.writeFileSync(APP_STATE_STORE, JSON.stringify(merged, null, 2));
+    } catch (e) {
+        console.error('Failed to save app state:', e.message);
     }
 }
 
@@ -392,6 +415,8 @@ ipcMain.handle('get-config-list', () => getConfigList());
 ipcMain.handle('save-named-config', (e, n, c) => saveNamedConfig(n, c));
 ipcMain.handle('load-named-config', (e, n) => loadNamedConfig(n));
 ipcMain.handle('delete-named-config', (e, n) => deleteNamedConfig(n));
+ipcMain.handle('save-app-state', (_e, state) => saveAppState(state));
+ipcMain.handle('get-app-state', () => loadAppState());
 
 ipcMain.handle('select-private-key', async (event, config) => {
   saveConfig(config);
