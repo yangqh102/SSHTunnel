@@ -23,6 +23,18 @@ let LOCAL_LISTEN_PORT;
 const REMOTE_HOST = '127.0.0.1';
 let REMOTE_PORT;
 
+// ========================== HEARTBEAT & RECONNECT ==========================
+let heartbeatInterval = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const HEARTBEAT_INTERVAL_MS = 30000;
+const RECONNECT_DELAY_MS = 2000;
+let isReconnecting = false;
+let tunnelWasConnected = false;
+let reconnectingTargetUrl = null;
+let wasConnectedBeforeCleanup = false; // Preserve across triggerReconnect → setupSSHTunneling
+let lastTargetPageUrl = null; // Pre-disconnect target page URL, used for reload
+
 // ========================== CONFIGURATION MANAGEMENT ==========================
 function loadAllNamedConfigs() {
     try {
@@ -150,7 +162,12 @@ function checkPortInUse(port, ip) {
 }
 
 // ========================== RESOURCE CLEANUP ==========================
+function stopHeartbeat() {
+  if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
+}
+
 function cleanupResources() {
+  stopHeartbeat();
   if (sshClient) { sshClient.end(); sshClient = null; }
   if (localServer) { localServer.close(); localServer = null; }
 }
@@ -163,16 +180,111 @@ function closeTargetWindow() {
 }
 
 // ========================== SSH TUNNEL SETUP ==========================
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatInterval = setInterval(() => {
+    if (sshClient && sshClient.forwardOut) {
+      sshClient.forwardOut('127.0.0.1', 0, REMOTE_HOST, REMOTE_PORT, (err, stream) => {
+        if (err || !stream) return;
+        stream.end();
+      });
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+async function reconnect() {
+  reconnectAttempts++;
+  if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+    console.error(`Reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts, giving up`);
+    return { success: false, message: 'Reconnection failed after multiple attempts' };
+  }
+  const savedUrl = reconnectingTargetUrl;
+  console.log(`Attempting reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+  await new Promise(r => setTimeout(r, RECONNECT_DELAY_MS));
+  return await startApplication(savedUrl);
+}
+
+function triggerReconnect() {
+  if (isReconnecting) return;
+  isReconnecting = true;
+  // Save "was connected" state BEFORE cleanup so onSshError can use it
+  wasConnectedBeforeCleanup = tunnelWasConnected;
+  // Save the exact pre-disconnect target URL (not SSH_CONFIG which may have changed)
+  const targetPageUrl = targetWindow && !targetWindow.isDestroyed()
+    ? targetWindow.getURL()
+    : SSH_CONFIG._targetUrl;
+  reconnectingTargetUrl = targetPageUrl;
+
+  // Stop heartbeat, close SSH + local server
+  stopHeartbeat();
+  tunnelWasConnected = false;
+  if (sshClient) {
+    const origClient = sshClient;
+    sshClient = null; // Nullify BEFORE end() to prevent close event from triggering recursive cleanup
+    origClient.end();
+  }
+  if (localServer) { localServer.close(); localServer = null; }
+
+  // Delay to let cleanup complete before reconnecting
+  setTimeout(async () => {
+    isReconnecting = false;
+    if (!reconnectingTargetUrl) {
+      console.log('No target URL saved, skipping reconnect');
+      return;
+    }
+    console.log('Triggering reconnect...');
+    const result = await reconnect();
+    if (!result.success) {
+      // Reconnect exhausted - close target and show setup
+      closeTargetWindow();
+      if (setupWindow && !setupWindow.isDestroyed()) {
+        setupWindow.show();
+        
+      } else {
+        createSetupWindow();
+      }
+    }
+  }, 300);
+}
+
 function setupSSHTunneling() {
   return new Promise((resolve, reject) => {
-    cleanupResources();
+    // Capture and reset the state SYNCHRONOUSLY to prevent recursive triggerReconnect from overwriting it
+    const wasConnected = wasConnectedBeforeCleanup;
+    wasConnectedBeforeCleanup = false;
+
+    // Only cleanup if we're NOT already in a reconnect (triggerReconnect already did cleanup)
+    if (!wasConnected) {
+      cleanupResources();
+    }
+    // For reconnect: preserve reconnectAttempts so the > MAX check works
+    // For initial connection: reset to 0
+    if (!wasConnected) {
+      reconnectAttempts = 0;
+    }
     sshClient = new Client();
-    
+
+    function onSshError(err) {
+      // If the tunnel was active before disconnect, this is a runtime disconnect → reconnect
+      if (wasConnected) {
+        triggerReconnect();
+        return;
+      }
+      // Initial connection failed
+      cleanupResources();
+      reject(`SSH connection failed: ${err.message}`);
+    }
+
     sshClient
       .on('ready', () => {
+        tunnelWasConnected = true;
+        if (wasConnected) reconnectAttempts = 0; // Reset on successful reconnect
+        startHeartbeat();
         localServer = net.createServer((sock) => {
           sshClient.forwardOut('127.0.0.1', 0, REMOTE_HOST, REMOTE_PORT, (err, stream) => {
             if (err) { sock.destroy(); return; }
+            stream.on('error', () => { triggerReconnect(); });
+            sock.on('error', () => { triggerReconnect(); });
             sock.pipe(stream).pipe(sock);
           });
         });
@@ -181,26 +293,53 @@ function setupSSHTunneling() {
           resolve();
         });
       })
-      .on('error', (err) => {
-        cleanupResources();
-        reject(`SSH connection failed: ${err.message}`);
+      .on('close', () => {
+        console.log('SSH tunnel closed');
+        // Only trigger reconnect if we successfully connected before (wasConnected is true)
+        // During setupSSHTooling cleanup, wasConnected is false so we skip here
+        if (wasConnected) {
+          triggerReconnect();
+        }
       })
+      .on('error', onSshError)
       .connect(SSH_CONFIG);
   });
 }
 
 // ========================== WINDOW MANAGEMENT ==========================
 async function createTargetWindow(targetUrl) {
+  // If an existing window is alive, just reload the URL — don't destroy it (avoids flash)
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    try {
+      await targetWindow.loadURL(targetUrl);
+    } catch (loadErr) {
+      closeTargetWindow();
+      throw loadErr;
+    }
+    return;
+  }
+
   targetWindow = new BrowserWindow({
     width: 1200, height: 800, icon: APP_ICON_PATH, autoHideMenuBar: true
   });
 
+  // Suppress Chromium page load error dialog for disconnected tunnel
   targetWindow.webContents.on('did-fail-load', () => {
-    closeTargetWindow();
+    // Silently ignore — loadURL() rejection is handled by try/catch
+  });
+  targetWindow.webContents.on('page-favicon-updated', () => {});
+  targetWindow.webContents.on('page-error', () => {
+    // Suppress error dialog
   });
 
   targetWindow.on('closed', () => { targetWindow = null; });
-  await targetWindow.loadURL(targetUrl);
+  try {
+    await targetWindow.loadURL(targetUrl);
+  } catch (loadErr) {
+    // loadURL may reject on tunnel disconnect — tunnel's reconnect handler manages recovery
+    closeTargetWindow();
+    throw loadErr;
+  }
 }
 
 function createSetupWindow() {
@@ -215,6 +354,7 @@ function createSetupWindow() {
 // ========================== CORE LOGIN LOGIC ==========================
 async function startApplication(targetUrl) {
   try {
+    SSH_CONFIG._targetUrl = targetUrl;
     // Port check
     const occupied = await checkPortInUse(LOCAL_LISTEN_PORT, LOCAL_LISTEN_IP);
     if (occupied) {
@@ -226,16 +366,20 @@ async function startApplication(targetUrl) {
     // Open target URL window
     await createTargetWindow(targetUrl);
 
-    // ✅ KEY FIX: Login SUCCESS → CLOSE setup window ONLY
+    // Login SUCCESS → CLOSE setup window
     if (setupWindow && !setupWindow.isDestroyed()) {
       setupWindow.close();
     }
 
     return { success: true, message: 'SSH tunnel established successfully' };
   } catch (err) {
-    console.error('Startup failed:', err);
+    // If a reconnect is already in progress, don't destroy the target window
+    if (isReconnecting) {
+      console.log('Reconnect already in progress, skipping cleanup');
+      return { success: false, message: err.toString() };
+    }
     cleanupResources();
-    closeTargetWindow(); // ❌ Login FAILED → CLOSE URL window ONLY
+    closeTargetWindow();
     return { success: false, message: err.toString() };
   }
 }
@@ -251,7 +395,7 @@ ipcMain.handle('delete-named-config', (e, n) => deleteNamedConfig(n));
 
 ipcMain.handle('select-private-key', async (event, config) => {
   saveConfig(config);
-  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000 };
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, _targetUrl: config.targetUrl };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
@@ -271,7 +415,7 @@ ipcMain.handle('select-private-key', async (event, config) => {
 
 ipcMain.handle('login-with-saved-key', async (event, config) => {
   saveConfig(config);
-  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000 };
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, _targetUrl: config.targetUrl };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
@@ -293,6 +437,15 @@ ipcMain.handle('login-with-saved-key', async (event, config) => {
 });
 
 // ========================== APP LIFECYCLE ==========================
+// Prevent tunnel disconnect errors from showing a dialog
+process.on('uncaughtException', (err) => {
+  if (err.code === 'ECONNRESET') {
+    console.log('Caught ECONNRESET, tunnel reconnect handler will manage recovery');
+  } else {
+    console.error('Uncaught exception:', err);
+  }
+});
+
 app.whenReady().then(createSetupWindow);
 
 app.on('window-all-closed', () => {
