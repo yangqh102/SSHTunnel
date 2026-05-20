@@ -301,6 +301,7 @@ function setupSSHTunneling() {
     sshClient
       .on('ready', () => {
         tunnelWasConnected = true;
+        wasConnectedBeforeCleanup = false; // Will be set to true by triggerReconnect on next disconnect
         if (wasConnected) reconnectAttempts = 0; // Reset on successful reconnect
         startHeartbeat();
         localServer = net.createServer((sock) => {
@@ -318,9 +319,8 @@ function setupSSHTunneling() {
       })
       .on('close', () => {
         console.log('SSH tunnel closed');
-        // Only trigger reconnect if we successfully connected before (wasConnected is true)
-        // During setupSSHTooling cleanup, wasConnected is false so we skip here
-        if (wasConnected) {
+        // Trigger reconnect if the tunnel was ever connected (even if wasConnected is false for initial setup)
+        if (tunnelWasConnected && !isReconnecting) {
           triggerReconnect();
         }
       })
