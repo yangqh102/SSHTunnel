@@ -367,7 +367,7 @@ async function createTargetWindow(targetUrl) {
 
 function createSetupWindow() {
   setupWindow = new BrowserWindow({
-    width: 650, height: 700, icon: APP_ICON_PATH, resizable: false, autoHideMenuBar: true,
+    width: 560, height: 580, icon: APP_ICON_PATH, resizable: false, autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'preload.js') }
   });
   setupWindow.loadFile(INDEX_HTML_PATH);

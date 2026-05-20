@@ -28,17 +28,17 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             min-height: 100vh;
             display: flex;
-            align-items: center;
-            justify-content: center;
+            align-items: flex-start;
+            justify-content: flex-start;
             background: linear-gradient(135deg, #E4EAF2 0%, #F5F7FA 100%);
-            padding: 15px;
+            padding: 10px 15px;
         }
 
         .container {
             background: var(--card-bg);
             width: 100%;
-            max-width: 680px;
-            padding: 28px 24px;
+            max-width: 540px;
+            padding: 20px 18px 6px;
             border-radius: 20px;
             box-shadow: var(--shadow);
             text-align: center;
@@ -62,10 +62,10 @@
 
         /* Configuration Card */
         .config-manager {
-            margin: 0 0 20px 0;
-            padding: 18px;
+            margin: 0 0 14px 0;
+            padding: 14px;
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: 12px;
             background-color: var(--light-bg);
             transition: all 0.2s ease;
         }
@@ -77,9 +77,10 @@
         .config-manager h3 {
             font-size: 16px;
             color: #202124;
-            margin-bottom: 14px;
+            margin-bottom: 8px;
             text-align: left;
             font-weight: 600;
+            font-size: 15px;
         }
         
         .config-select-group {
@@ -140,30 +141,29 @@
         .form-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 22px;
+            gap: 10px;
+            margin-bottom: 16px;
         }
 
         .input-group {
             display: flex;
             flex-direction: column;
             align-items: flex-start;
-            gap: 6px;
+            gap: 4px;
         }
 
         .input-group label {
-            font-size: 13px;
+            font-size: 12px;
             color: #5F6368;
             font-weight: 500;
-            letter-spacing: 0.2px;
         }
 
         .input-group input {
             width: 100%;
-            padding: 11px 15px;
+            padding: 9px 12px;
             border: 1px solid var(--border);
-            border-radius: 10px;
-            font-size: 14px;
+            border-radius: 8px;
+            font-size: 13px;
             color: #202124;
             outline: none;
             transition: all 0.2s ease;
@@ -182,21 +182,21 @@
         /* Button Group */
         .btn-group {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             justify-content: center;
             flex-wrap: wrap;
-            margin-bottom: 18px;
+            margin-bottom: 14px;
         }
 
         .action-btn {
-            padding: 12px 26px;
-            font-size: 14px;
+            padding: 10px 22px;
+            font-size: 13px;
             font-weight: 500;
             cursor: pointer;
             border: none;
-            border-radius: 12px;
+            border-radius: 10px;
             transition: all 0.25s ease;
-            min-width: 145px;
+            min-width: 120px;
         }
 
         .primary-btn {
@@ -242,25 +242,52 @@
             display: none !important;
         }
 
-        /* Status Tip */
-        #status {
-            margin-top: 6px;
-            margin-bottom: 6px;
-            padding: 8px 16px;
+        /* Toast Notification */
+        #toast {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            min-width: 280px;
+            max-width: 420px;
+            padding: 12px 20px;
             border-radius: 10px;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
-            min-height: 0;
+            text-align: center;
+            z-index: 9999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+            color: #fff;
             display: flex;
             align-items: center;
             justify-content: center;
-            animation: fadeIn 0.3s ease;
-            transition: all 0.2s ease;
+            gap: 8px;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(5px); }
-            to { opacity: 1; transform: translateY(0); }
+        #toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+        }
+
+        #toast.error {
+            background: linear-gradient(135deg, #EA4335, #C5221F);
+        }
+
+        #toast.success {
+            background: linear-gradient(135deg, #34A853, #1E8E3E);
+        }
+
+        #toast.info {
+            background: linear-gradient(135deg, #4285F4, #1557B0);
+        }
+
+        #toast .toast-icon {
+            font-size: 16px;
+            flex-shrink: 0;
         }
     </style>
 </head>
@@ -315,9 +342,9 @@
             <button id="loginBtn" class="action-btn primary-btn hidden">Login</button>
             <button id="reselectKeyBtn" class="action-btn secondary-btn hidden">Reselect Key</button>
         </div>
-        
-        <div id="status"></div>
     </div>
+
+    <div id="toast"></div>
 
 <script>
         // DOM Elements
@@ -335,7 +362,7 @@
         const selectKeyBtn = document.getElementById('selectKeyBtn');
         const loginBtn = document.getElementById('loginBtn');
         const reselectKeyBtn = document.getElementById('reselectKeyBtn');
-        const statusDiv = document.getElementById('status');
+        const toastEl = document.getElementById('toast');
         const setupDesc = document.getElementById('setup-desc');
 
         // Initialize UI: load config, key status and saved configurations
@@ -402,18 +429,26 @@
             }
         }
 
-        // Update status message for user
-        function updateStatus(text, isSuccess = false) {
-            statusDiv.textContent = text;
-            statusDiv.style.color = isSuccess ? '#fff' : '#fff';
-            statusDiv.style.backgroundColor = isSuccess ? '#34A853' : '#EA4335';
+        let toastTimer = null;
+        function showToast(message, type = 'error') {
+            if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+            const icons = { error: '✖', success: '✔', info: 'ℹ' };
+            toastEl.className = type;
+            toastEl.innerHTML = '<span class="toast-icon">' + (icons[type] || '') + '</span> ' + message;
+            requestAnimationFrame(() => {
+                toastEl.classList.add('show');
+            });
+            toastTimer = setTimeout(() => {
+                toastEl.classList.remove('show');
+                toastTimer = null;
+            }, 3000);
         }
 
         // Validate IPv4 address format
         function validateIp(ip) {
             const ipRegex = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
             if (!ipRegex.test(ip)) {
-                updateStatus('Error: Invalid IPv4 address');
+                showToast('Invalid IPv4 address');
                 return false;
             }
             return ip;
@@ -423,7 +458,7 @@
         function validateUsername(input) {
             const username = input.value.trim();
             if (!username) {
-                updateStatus('Error: SSH username cannot be empty');
+                showToast('SSH username cannot be empty');
                 return false;
             }
             return username;
@@ -433,7 +468,7 @@
         function validatePort(input) {
             const port = parseInt(input.value.trim(), 10);
             if (isNaN(port) || port < 1 || port > 65535) {
-                updateStatus(`Error: Invalid port (1-65535)`);
+                showToast('Invalid port number (1-65535)');
                 return false;
             }
             return port;
@@ -442,14 +477,14 @@
         // Validate URL format
         function validateUrl(url) {
             if (!url.trim()) {
-                updateStatus('Error: Target URL cannot be empty');
+                showToast('Target URL cannot be empty');
                 return false;
             }
             try {
                 new URL(url);
                 return url;
             } catch (e) {
-                updateStatus('Error: Invalid URL format');
+                showToast('Invalid URL format');
                 return false;
             }
         }
@@ -474,19 +509,19 @@
         async function handleSaveConfig() {
             const configName = configNameInput.value.trim();
             if (!configName) {
-                updateStatus('Error: Config name cannot be empty');
+                showToast('Config name cannot be empty');
                 return;
             }
             const config = getValidatedConfig();
             if (!config) return;
-            
+
             try {
                 await window.electronAPI.saveNamedConfig(configName, config);
-                updateStatus(`Config "${configName}" saved successfully`, true);
+                showToast('Config saved', 'success');
                 configNameInput.value = '';
                 await loadConfigList();
             } catch (err) {
-                updateStatus(`Error: ${err.message}`);
+                showToast(err.message);
             }
         }
 
@@ -496,7 +531,7 @@
             // Persist the selection so it survives app restart
             await window.electronAPI.saveAppState({ lastConfigName: configName });
             if (!configName) return;
-            
+
             try {
                 const config = await window.electronAPI.loadNamedConfig(configName);
                 remoteSshIpInput.value = config.remoteSshIp;
@@ -505,9 +540,8 @@
                 forwardTargetPortInput.value = config.forwardTargetPort;
                 localPortInput.value = config.localListenPort;
                 targetUrlInput.value = config.targetUrl;
-                updateStatus(`Loaded config: ${configName}`, true);
             } catch (err) {
-                updateStatus(`Error: ${err.message}`);
+                showToast(err.message);
             }
         }
 
@@ -515,13 +549,13 @@
         async function handleDeleteConfig() {
             const configName = configSelect.value;
             if (!configName) {
-                updateStatus('Error: Please select a config to delete');
+                showToast('Please select a config to delete');
                 return;
             }
-            
+
             try {
                 await window.electronAPI.deleteNamedConfig(configName);
-                updateStatus(`Config "${configName}" deleted successfully`, true);
+                showToast('Config deleted', 'success');
                 await loadConfigList();
                 remoteSshIpInput.value = '';
                 remoteSshUsernameInput.value = '';
@@ -530,7 +564,7 @@
                 localPortInput.value = '';
                 targetUrlInput.value = '';
             } catch (err) {
-                updateStatus(`Error: ${err.message}`);
+                showToast(err.message);
             }
         }
 
@@ -538,17 +572,17 @@
         async function handleSelectKey() {
             const config = getValidatedConfig();
             if (!config) return;
-            updateStatus('Selecting private key...');
+            showToast('Selecting private key...', 'info');
             try {
                 const res = await window.electronAPI.selectPrivateKey(config);
                 if (res.success) {
-                    updateStatus('Private key saved! Please click Login to connect', true);
+                    showToast('Private key saved. Click Login to connect', 'success');
                     await initUI();
                 } else {
-                    updateStatus(`Error: ${res.message}`);
+                    showToast(res.message);
                 }
-            } catch (err) { 
-                updateStatus(`Error: ${err.message}`); 
+            } catch (err) {
+                showToast(err.message);
             }
         }
 
@@ -556,18 +590,22 @@
         async function handleLogin() {
             const config = getValidatedConfig();
             if (!config) return;
-            updateStatus('Connecting SSH tunnel...');
+            showToast('Connecting SSH tunnel...', 'info');
             try {
                 const res = await window.electronAPI.loginWithSavedKey(config);
-                res.success ? updateStatus(res.message, true) : updateStatus(`Error: ${res.message}`);
-            } catch (err) { 
-                updateStatus(`Error: ${err.message}`); 
+                if (res.success) {
+                    showToast('SSH tunnel established', 'success');
+                } else {
+                    showToast(res.message);
+                }
+            } catch (err) {
+                showToast(err.message);
             }
         }
 
         // Clear saved private key
         async function handleReselectKey() {
-            updateStatus('Clearing saved key...');
+            showToast('Clearing saved key...', 'info');
             await window.electronAPI.clearPrivateKey();
             await initUI();
         }
