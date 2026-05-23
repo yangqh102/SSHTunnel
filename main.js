@@ -337,9 +337,9 @@ async function createTargetWindow(targetUrl) {
       await targetWindow.loadURL(targetUrl);
     } catch (loadErr) {
       closeTargetWindow();
-      throw loadErr;
+      return { success: false, message: loadErr.message };
     }
-    return;
+    return { success: true };
   }
 
   targetWindow = new BrowserWindow({
@@ -358,10 +358,11 @@ async function createTargetWindow(targetUrl) {
   targetWindow.on('closed', () => { targetWindow = null; });
   try {
     await targetWindow.loadURL(targetUrl);
+    return { success: true };
   } catch (loadErr) {
     // loadURL may reject on tunnel disconnect — tunnel's reconnect handler manages recovery
     closeTargetWindow();
-    throw loadErr;
+    return { success: false, message: loadErr.message };
   }
 }
 
@@ -376,35 +377,31 @@ function createSetupWindow() {
 
 // ========================== CORE LOGIN LOGIC ==========================
 async function startApplication(targetUrl) {
-  try {
-    SSH_CONFIG._targetUrl = targetUrl;
-    // Port check
-    const occupied = await checkPortInUse(LOCAL_LISTEN_PORT, LOCAL_LISTEN_IP);
-    if (occupied) {
-      return { success: false, message: `Port ${LOCAL_LISTEN_PORT} is in use` };
-    }
-
-    // Create SSH tunnel
-    await setupSSHTunneling();
-    // Open target URL window
-    await createTargetWindow(targetUrl);
-
-    // Login SUCCESS → CLOSE setup window
-    if (setupWindow && !setupWindow.isDestroyed()) {
-      setupWindow.close();
-    }
-
-    return { success: true, message: 'SSH tunnel established successfully' };
-  } catch (err) {
-    // If a reconnect is already in progress, don't destroy the target window
-    if (isReconnecting) {
-      console.log('Reconnect already in progress, skipping cleanup');
-      return { success: false, message: err.toString() };
-    }
-    cleanupResources();
-    closeTargetWindow();
-    return { success: false, message: err.toString() };
+  SSH_CONFIG._targetUrl = targetUrl;
+  // Port check
+  const occupied = await checkPortInUse(LOCAL_LISTEN_PORT, LOCAL_LISTEN_IP);
+  if (occupied) {
+    return { success: false, message: `Port ${LOCAL_LISTEN_PORT} is in use` };
   }
+
+  // Create SSH tunnel
+  await setupSSHTunneling();
+
+  // Open target URL window
+  const result = await createTargetWindow(targetUrl);
+  if (!result.success) {
+    // Target URL load failed — do NOT trigger reconnect
+    isReconnecting = false;
+    wasConnectedBeforeCleanup = false;
+    return { success: false, message: result.message };
+  }
+
+  // Login SUCCESS → CLOSE setup window
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.close();
+  }
+
+  return { success: true, message: 'SSH tunnel established successfully' };
 }
 
 // ========================== IPC HANDLERS ==========================
