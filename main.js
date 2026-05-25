@@ -105,9 +105,9 @@ function saveAppState(state) {
 
 // ========================== DEFAULT CONFIG & PERSISTENCE ==========================
 const DEFAULT_SSH_CONFIG = {
-  remoteSshUsername: 'dell',
-  remoteSshIp: '222.212.86.164',
-  remoteSshPort: 10007,
+  remoteSshUsername: 'root',
+  remoteSshIp: '192.168.1.100',
+  remoteSshPort: 22,
   forwardTargetPort: 8008,
   localListenPort: 8008,
   targetUrl: 'http://127.0.0.1:8008'
@@ -301,7 +301,7 @@ function setupSSHTunneling() {
     sshClient
       .on('ready', () => {
         tunnelWasConnected = true;
-        wasConnectedBeforeCleanup = false; // Will be set to true by triggerReconnect on next disconnect
+        wasConnectedBeforeCleanup = true; // Signal that tunnel was connected (for onSshError vs close handlers)
         if (wasConnected) reconnectAttempts = 0; // Reset on successful reconnect
         startHeartbeat();
         localServer = net.createServer((sock) => {
@@ -385,7 +385,13 @@ async function startApplication(targetUrl) {
   }
 
   // Create SSH tunnel
+  const wasReconnecting = wasConnectedBeforeCleanup;
   await setupSSHTunneling();
+
+  // On reconnect: tunnel is re-established, target window already exists — no need to reopen
+  if (wasReconnecting) {
+    return { success: true, message: 'SSH tunnel reconnected' };
+  }
 
   // Open target URL window
   const result = await createTargetWindow(targetUrl);
