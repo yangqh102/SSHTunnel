@@ -51,9 +51,9 @@ npm run build:all
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
-| Remote SSH IP | 远程 SSH 服务器地址 | `222.212.86.164` |
+| Remote SSH IP | 远程 SSH 服务器地址 | `192.168.1.100` |
 | SSH Username | SSH 登录用户名 | `root` |
-| SSH Port | SSH 端口 | `10007` |
+| SSH Port | SSH 端口 | `22` |
 | Target Port | 远程服务端口 | `8008` |
 | Local Port | 本地监听端口（与目标 URL 同步） | `8008` |
 | Target URL | 打开的目标网页 | `http://127.0.0.1:8008` |
