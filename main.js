@@ -34,6 +34,7 @@ let isReconnecting = false;
 let tunnelWasConnected = false;
 let reconnectingTargetUrl = null;
 let wasConnectedBeforeCleanup = false; // Preserve across triggerReconnect → setupSSHTunneling
+let isReconnectingCycle = false;       // True during entire reconnect cycle, prevents counter reset
 let lastTargetPageUrl = null; // Pre-disconnect target page URL, used for reload
 
 // ========================== CONFIGURATION MANAGEMENT ==========================
@@ -200,6 +201,9 @@ function closeTargetWindow() {
     targetWindow.destroy();
     targetWindow = null;
   }
+  // Clear tunnelWasConnected to prevent spurious reconnection after cleanup
+  tunnelWasConnected = false;
+  wasConnectedBeforeCleanup = false;
 }
 
 // ========================== SSH TUNNEL SETUP ==========================
@@ -230,8 +234,10 @@ async function reconnect() {
 function triggerReconnect() {
   if (isReconnecting) return;
   isReconnecting = true;
-  // Save "was connected" state BEFORE cleanup so onSshError can use it
-  wasConnectedBeforeCleanup = tunnelWasConnected;
+  isReconnectingCycle = true;
+  // Always set wasConnectedBeforeCleanup to true — if we're triggering reconnect,
+  // the tunnel was previously connected. tunnelWasConnected is false during cleanup.
+  wasConnectedBeforeCleanup = true;
   // Save the exact pre-disconnect target URL (not SSH_CONFIG which may have changed)
   const targetPageUrl = targetWindow && !targetWindow.isDestroyed()
     ? targetWindow.getURL()
@@ -250,9 +256,10 @@ function triggerReconnect() {
 
   // Delay to let cleanup complete before reconnecting
   setTimeout(async () => {
-    isReconnecting = false;
+    // isReconnectingCycle stays true — only cleared in reconnect() after exhaustion
     if (!reconnectingTargetUrl) {
       console.log('No target URL saved, skipping reconnect');
+      isReconnecting = false;
       return;
     }
     console.log('Triggering reconnect...');
@@ -260,9 +267,11 @@ function triggerReconnect() {
     if (!result.success) {
       // Reconnect exhausted - close target and show setup
       closeTargetWindow();
+      isReconnecting = false;
+      isReconnectingCycle = false;
       if (setupWindow && !setupWindow.isDestroyed()) {
         setupWindow.show();
-        
+
       } else {
         createSetupWindow();
       }
@@ -272,7 +281,8 @@ function triggerReconnect() {
 
 function setupSSHTunneling() {
   return new Promise((resolve, reject) => {
-    // Capture and reset the state SYNCHRONOUSLY to prevent recursive triggerReconnect from overwriting it
+    // Capture state SYNCHRONOUSLY to prevent recursive triggerReconnect from overwriting it
+    const wasReconnecting = isReconnectingCycle;
     const wasConnected = wasConnectedBeforeCleanup;
     wasConnectedBeforeCleanup = false;
 
@@ -302,7 +312,8 @@ function setupSSHTunneling() {
       .on('ready', () => {
         tunnelWasConnected = true;
         wasConnectedBeforeCleanup = true; // Signal that tunnel was connected (for onSshError vs close handlers)
-        if (wasConnected) reconnectAttempts = 0; // Reset on successful reconnect
+        // Only reset counter on initial connection (wasReconnecting === false), NOT on reconnect
+        if (!wasReconnecting) reconnectAttempts = 0;
         startHeartbeat();
         localServer = net.createServer((sock) => {
           sshClient.forwardOut('127.0.0.1', 0, REMOTE_HOST, REMOTE_PORT, (err, stream) => {
@@ -319,7 +330,7 @@ function setupSSHTunneling() {
       })
       .on('close', () => {
         console.log('SSH tunnel closed');
-        // Trigger reconnect if the tunnel was ever connected (even if wasConnected is false for initial setup)
+        // Trigger reconnect only if the tunnel was actively connected (not during setup)
         if (tunnelWasConnected && !isReconnecting) {
           triggerReconnect();
         }
@@ -397,8 +408,6 @@ async function startApplication(targetUrl) {
   const result = await createTargetWindow(targetUrl);
   if (!result.success) {
     // Target URL load failed — do NOT trigger reconnect
-    isReconnecting = false;
-    wasConnectedBeforeCleanup = false;
     return { success: false, message: result.message };
   }
 
@@ -423,7 +432,7 @@ ipcMain.handle('get-app-state', () => loadAppState());
 
 ipcMain.handle('select-private-key', async (event, config) => {
   saveConfig(config);
-  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, _targetUrl: config.targetUrl };
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, keepaliveInterval: 15000, keepaliveCountMax: 3, _targetUrl: config.targetUrl };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
@@ -443,7 +452,7 @@ ipcMain.handle('select-private-key', async (event, config) => {
 
 ipcMain.handle('login-with-saved-key', async (event, config) => {
   saveConfig(config);
-  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, _targetUrl: config.targetUrl };
+  SSH_CONFIG = { host: config.remoteSshIp, port: config.remoteSshPort, username: config.remoteSshUsername, readyTimeout: 15000, keepaliveInterval: 15000, keepaliveCountMax: 3, _targetUrl: config.targetUrl };
   LOCAL_LISTEN_PORT = config.localListenPort;
   REMOTE_PORT = config.forwardTargetPort;
 
