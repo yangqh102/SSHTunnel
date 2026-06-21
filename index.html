@@ -312,8 +312,8 @@
         
         <div class="form-grid">
             <div class="input-group">
-                <label for="remoteSshIpInput">Remote SSH IP</label>
-                <input type="text" id="remoteSshIpInput" value="192.168.1.100" placeholder="e.g. 192.168.1.100">
+                <label for="remoteSshIpInput">Remote SSH IP / Host</label>
+                <input type="text" id="remoteSshIpInput" value="192.168.1.100" placeholder="e.g. 192.168.1.100 or server.example.com">
             </div>
             <div class="input-group">
                 <label for="remoteSshUsernameInput">SSH Username</label>
@@ -444,14 +444,15 @@
             }, 3000);
         }
 
-        // Validate IPv4 address format
+        // Validate IPv4 address or hostname (domain name) format
         function validateIp(ip) {
             const ipRegex = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-            if (!ipRegex.test(ip)) {
-                showToast('Invalid IPv4 address');
-                return false;
-            }
-            return ip;
+            if (ipRegex.test(ip)) return ip;
+            // Also allow hostname (domain name), e.g. server.example.com
+            const hostRegex = /^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$/;
+            if (hostRegex.test(ip)) return ip;
+            showToast('Invalid address (IP or hostname)');
+            return false;
         }
 
         // Validate SSH username (not empty)
